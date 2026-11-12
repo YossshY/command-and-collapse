@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Command &amp; Collapse — STR 3D multijoueur P2P</title>
+<meta name="description" content="Jeu de stratégie en temps réel 3D dans le navigateur, multijoueur pair-à-pair sans serveur." />
+<meta name="theme-color" content="#0a0e13" />
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+
+<!-- ============================== HUD DE PARTIE ============================== -->
+<div id="hud" class="hidden">
+  <div class="hud-top">
+    <div class="badge">
+      <span class="dot" id="hud-dot"></span>
+      <div class="badge-text">
+        <strong id="hud-name">—</strong>
+        <small id="hud-faction">—</small>
+      </div>
+    </div>
+    <div class="hud-stats">
+      <span id="hud-units">0 unité</span>
+      <span id="hud-peers">0 allié</span>
+      <span id="hud-net" class="net">connexion…</span>
+    </div>
+  </div>
+
+  <div class="hud-bottom">
+    <div id="hud-selection" class="panel">Aucune unité sélectionnée</div>
+    <div class="hud-hint">
+      <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> sélection multiple ·
+      <kbd>Clic droit</kbd> déplacement · <kbd>ZQSD</kbd>/<kbd>Flèches</kbd> caméra ·
+      <kbd>Molette</kbd> zoom · <kbd>B</kbd> bulldozer
+    </div>
+  </div>
+
+  <div id="select-box" class="hidden"></div>
+  <div id="toasts"></div>
+</div>
+
+<!-- ================================= LOBBY ================================== -->
+<div id="lobby" class="screen hidden">
+  <header class="lobby-head">
+    <h1>COMMAND <span>&amp;</span> COLLAPSE</h1>
+    <p>Stratégie temps réel 3D · multijoueur pair-à-pair · aucun serveur</p>
+  </header>
+
+  <div class="lobby-grid">
+    <section class="card">
+      <h2>Votre profil</h2>
+
+      <label class="field">
+        <span>Pseudo</span>
+        <input id="in-name" maxlength="16" placeholder="Commandant" autocomplete="off" spellcheck="false" />
+      </label>
+
+      <div class="field">
+        <span>Faction</span>
+        <div class="factions" id="factions">
+          <button class="faction" data-faction="usa" type="button">
+            <strong>USA</strong>
+            <small>Blindés lourds · soutien aérien</small>
+          </button>
+          <button class="faction" data-faction="china" type="button">
+            <strong>Chine</strong>
+            <small>Nombre · artillerie · blindage</small>
+          </button>
+          <button class="faction" data-faction="gla" type="button">
+            <strong>GLA</strong>
+            <small>Vitesse · embuscades · guérilla</small>
+          </button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span>Couleur d'équipe</span>
+        <div class="colors" id="colors"></div>
+      </div>
+
+      <div class="field">
+        <span>Signalisation P2P</span>
+        <select id="in-net">
+          <option value="mqtt">MQTT (recommandé)</option>
+          <option value="torrent">BitTorrent</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Salons <span id="room-count" class="pill">0</span></h2>
+
+      <div id="room-list" class="room-list">
+        <p class="empty">Recherche de parties en cours…</p>
+      </div>
+
+      <div class="row">
+        <button id="btn-create" class="btn primary" type="button">Créer un salon</button>
+        <button id="btn-private" class="btn" type="button">Salon privé</button>
+      </div>
+
+      <div class="row">
+        <input id="in-code" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" />
+        <button id="btn-join-code" class="btn" type="button">Rejoindre</button>
+      </div>
+
+      <p class="foot">
+        Réseau : <span id="net-mode">…</span> · 4 joueurs max · les parties s'annoncent toutes les 2 s
+      </p>
+    </section>
+  </div>
+</div>
+
+<!-- ============================ SALON D'ATTENTE ============================= -->
+<div id="waiting" class="screen hidden">
+  <div class="card wide">
+    <h2>Salon <span id="wait-code" class="code">—</span></h2>
+    <p id="wait-sub" class="muted"></p>
+    <ul id="wait-players" class="players"></ul>
+    <div class="row">
+      <button id="btn-start" class="btn primary" type="button">Lancer la partie</button>
+      <button id="btn-leave" class="btn" type="button">Quitter</button>
+    </div>
+  </div>
+</div>
+
+<div id="boot">Chargement du moteur 3D et du réseau P2P…</div>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>
