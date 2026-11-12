@@ -564,6 +564,8 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
     id, kind: 'unit', type, owner, faction, def, mesh, ring, bar, carryBar,
     alt, y: isAir ? 1.4 : 0, landed: isAir,
     pad: isAir ? { x, z } : null, orbit: 0,
+    ammoMax: isAir ? (def.ammo || AMMO_MAX) : 0, ammo: isAir ? (def.ammo || AMMO_MAX) : 0,
+    loiterPoint: null, rearmT: 0,
     mode: MODE.GUARD, home: { x, z }, dest: null, orderTarget: null,
     x, z, ry,
     hp: hp == null ? def.hp : hp,
@@ -967,6 +969,7 @@ function findTarget(u, explicitRange) {
 
 function updateCombat(u, dt) {
   if (!u.def.dmg) return;
+  if (u.alt && u.ammo <= 0) return;   // plus de munitions : il rentre se réarmer
   u.cd -= dt;
   if (u.cd > 0) return;
 
@@ -980,6 +983,7 @@ function updateCombat(u, dt) {
   if (!target) return;
 
   u.cd = u.def.cd;
+  if (u.alt) u.ammo -= 1;
 
   // Un aéronef garde son cap de vol : il tire en passant, sans pivoter sur place
   if (!u.alt) {
@@ -1356,6 +1360,7 @@ function singleEntityHtml(e) {
       rows.push(['Cargaison', `${Math.round(e.carry)} / ${e.carryMax} $`]);
       rows.push(['État', STATE_LABEL[e.state] || e.state]);
     } else {
+      if (e.ammoMax) rows.push(['Munitions', `${Math.max(0, e.ammo)} / ${e.ammoMax}`]);
       rows.push(['Ordre', MODE_LABEL[e.mode] || e.mode]);
     }
   } else {
@@ -1970,8 +1975,14 @@ const MODE = {
   GUARD_RETALIATE: 'guardRetaliate',
   MOVE_TO: 'moveTo',
   ATTACK_MOVE: 'attackMove',
-  ATTACK_OBJECT: 'attackObject'
+  ATTACK_OBJECT: 'attackObject',
+  LOITER: 'loiter',
+  REARM: 'rearm'
 };
+
+const AMMO_MAX = 6;       // munitions par sortie
+const REARM_TIME = 6;     // secondes de rechargement au sol
+const LOITER_RADIUS = 11; // rayon de la ronde au-dessus d'un point
 
 const MODE_LABEL = {
   idle: 'au repos',
@@ -1979,7 +1990,9 @@ const MODE_LABEL = {
   guardRetaliate: 'garde riposte',
   moveTo: 'en déplacement',
   attackMove: 'attaque-mobile',
-  attackObject: 'assaut'
+  attackObject: 'assaut',
+  loiter: 'ronde',
+  rearm: 'réarmement'
 };
 
 /** Distance d'arrêt devant une cible : on tire, on ne monte pas dessus. */
@@ -2037,13 +2050,48 @@ function orbitAround(u, t, dt, range) {
  */
 function updateAircraftAI(u, dt) {
   const range = u.def.range || 10;
+
+  /* -------- Réarmement : au sol, sur sa piste uniquement */
+  if (u.mode === MODE.REARM) {
+    const pad = u.pad;
+    if (!pad) { u.mode = MODE.GUARD; return; }
+
+    if (Math.hypot(pad.x - u.x, pad.z - u.z) > 3) {
+      u.landed = false;
+      u.target = { x: pad.x, z: pad.z };
+      return;
+    }
+
+    u.target = null;
+    u.landed = true;
+    u.rearmT += dt;
+
+    if (u.rearmT >= REARM_TIME) {
+      u.rearmT = 0;
+      u.ammo = u.ammoMax;
+      u.mode = u.loiterPoint ? MODE.LOITER : MODE.GUARD;
+      if (u.owner === myId) toast(`${u.def.name} réarmé.`);
+    }
+    return;
+  }
+
   u.landed = false;
 
+  /* -------- Plus de munitions : retour à la piste */
+  if (u.ammo <= 0) {
+    u.mode = MODE.REARM;
+    u.rearmT = 0;
+    u.target = null;
+    return;
+  }
+
+  /* -------- Assaut : passages circulaires jusqu'à destruction */
   if (u.mode === MODE.ATTACK_OBJECT) {
     const t = u.orderTarget ? getEntity(u.orderTarget) : null;
     if (!t) {
       u.orderTarget = null;
-      u.mode = MODE.GUARD;
+      u.loiterPoint = { x: u.x, z: u.z };
+      u.mode = MODE.LOITER;
       u.target = null;
       return;
     }
@@ -2052,6 +2100,7 @@ function updateAircraftAI(u, dt) {
     return;
   }
 
+  /* -------- Attaque-mobile */
   if (u.mode === MODE.ATTACK_MOVE) {
     const t = findTarget(u, range * 1.6);
     if (t) {
@@ -2063,28 +2112,43 @@ function updateAircraftAI(u, dt) {
       u.target = { x: u.dest.x, z: u.dest.z };
       return;
     }
+    u.loiterPoint = u.dest ? { x: u.dest.x, z: u.dest.z } : { x: u.x, z: u.z };
     u.dest = null;
-    u.mode = MODE.GUARD;
-    u.target = null;
+    u.orbit = Math.random() * Math.PI * 2;
+    u.mode = MODE.LOITER;
     return;
   }
 
+  /* -------- Déplacement : on arrive, puis on TOURNE sur place */
   if (u.mode === MODE.MOVE_TO) {
     if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 2) {
       u.target = { x: u.dest.x, z: u.dest.z };
       return;
     }
+    u.loiterPoint = u.dest ? { x: u.dest.x, z: u.dest.z } : { x: u.x, z: u.z };
     u.dest = null;
-    u.mode = MODE.GUARD;
-    u.target = null;
+    u.orbit = Math.random() * Math.PI * 2;
+    u.mode = MODE.LOITER;
     return;
   }
 
-  // Garde : retour à la piste, puis posé — jamais ailleurs
+  /* -------- Ronde : cercle au-dessus du point demandé */
+  if (u.mode === MODE.LOITER) {
+    const c = u.loiterPoint || u.pad;
+    if (!c) { u.mode = MODE.GUARD; return; }
+
+    u.orbit += dt * 0.55;
+    u.target = {
+      x: c.x + Math.cos(u.orbit) * LOITER_RADIUS,
+      z: c.z + Math.sin(u.orbit) * LOITER_RADIUS
+    };
+    return;
+  }
+
+  /* -------- Garde : retour à la piste et posé */
   const pad = u.pad || u.home;
   if (!pad) { u.target = null; return; }
 
-  // On se pose SUR la piste, pas à 9 unités d'elle
   if (Math.hypot(pad.x - u.x, pad.z - u.z) > 3) {
     u.target = { x: pad.x, z: pad.z };
   } else {

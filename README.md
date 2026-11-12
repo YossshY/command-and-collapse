@@ -391,12 +391,18 @@ il ouvre simplement le feu sur ce qui est à portée.
 
 - Chaque avion retient l'aérodrome qui l'a produit (`u.pad`) ; un ordre de
   déplacement ne change jamais ce point d'attache.
-- En assaut, ils ne s'arrêtent pas : ils **tournent autour de la cible** à
-  `portée × 0,62` et tirent en passant (`orbitAround`). Vérifié en jeu : distance
-  figée à 6,2 et angle qui décrit un tour complet — plus de surplace.
-- Sans ordre, ils rentrent à la piste, se posent dessus (≤ 3 unités du centre)
-  et y restent jusqu'au prochain ordre. Touchés au sol, ils décollent.
+- **Ordre de déplacement** : l'avion va au point puis **fait des rondes
+  dessus** (`loiter`, rayon 11) — il ne rentre pas à la base. Vérifié : distance
+  au point figée à 11 pendant que la distance à la piste augmente.
+- **En assaut** : il ne s'arrête pas, il **tourne autour de la cible** à
+  `portée × 0,62` et tire en passant (`orbitAround`).
+- **Munitions** : 6 par sortie (`AMMO_MAX`). À sec, il rentre (`rearm`), se pose
+  sur sa piste, recharge en 6 s, puis repart en ronde là où il était.
+  Vérifié : `ammo 5→0` → `rearm` → atterrissage (y 1,4) → `ammo 6` → `loiter`.
+- Sans ordre du tout, il se pose sur sa piste (≤ 3 unités du centre). Touché au
+  sol, il décolle.
 - Altitude de croisière 9 avec ombre portée, décollage/atterrissage lissés.
+  Le panneau de sélection affiche « Munitions x / 6 ».
 
 ## Débogage
 
