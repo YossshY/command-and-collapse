@@ -563,6 +563,7 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
   const unit = {
     id, kind: 'unit', type, owner, faction, def, mesh, ring, bar, carryBar,
     alt, y: isAir ? 1.4 : 0, landed: isAir,
+    pad: isAir ? { x, z } : null, orbit: 0,
     mode: MODE.GUARD, home: { x, z }, dest: null, orderTarget: null,
     x, z, ry,
     hp: hp == null ? def.hp : hp,
@@ -816,6 +817,12 @@ function spawnFromBuilding(b, type, free) {
   const id = `${b.owner}:u${++entitySeq}`;
   const u = addUnit({ id, type, owner: b.owner, x, z, ry: Math.atan2(-Math.cos(a), -Math.sin(a)) });
 
+  // Un aéronef est rattaché à l'aérodrome qui l'a produit
+  if (u.alt) {
+    u.pad = { x: b.x, z: b.z };
+    u.home = { x: b.x, z: b.z };
+  }
+
   if (b.rally) orderMove(u, b.rally.x, b.rally.z, false);
   if (free && b.owner === myId) toast(`${def.name} livré.`);
   return u;
@@ -973,8 +980,12 @@ function updateCombat(u, dt) {
   if (!target) return;
 
   u.cd = u.def.cd;
-  u.ry = Math.atan2(target.x - u.x, target.z - u.z);
-  u.mesh.rotation.y = u.ry;
+
+  // Un aéronef garde son cap de vol : il tire en passant, sans pivoter sur place
+  if (!u.alt) {
+    u.ry = Math.atan2(target.x - u.x, target.z - u.z);
+    u.mesh.rotation.y = u.ry;
+  }
 
   spawnTracer(u, target, u.alt ? u.alt + 1 : 1.2);
   if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
@@ -1015,6 +1026,9 @@ function updateTracers(dt) {
 
 function applyDamage(entity, dmg) {
   entity.hp -= dmg;
+
+  // Un aéronef posé décolle dès qu'il est touché
+  if (entity.kind === 'unit' && entity.alt && entity.landed) entity.landed = false;
 
   // Une unité en garde riposte (poursuite limitée) au lieu de rester passive
   if (entity.hp > 0 && entity.kind === 'unit' && entity.mode === MODE.GUARD) {
@@ -1982,7 +1996,8 @@ function orderMove(u, x, z, attackMove) {
   u.target = { x, z };
   u.dest = { x, z };
   u.orderTarget = null;
-  u.home = { x, z };
+  // Un aéronef garde sa piste comme point d'attache, quoi qu'on lui dise
+  if (!u.alt) u.home = { x, z };
   u.mode = attackMove ? MODE.ATTACK_MOVE : MODE.MOVE_TO;
 }
 
@@ -2000,7 +2015,7 @@ function orderStop(u) {
   u.dest = null;
   u.orderTarget = null;
   u.mode = MODE.GUARD;
-  u.home = { x: u.x, z: u.z };
+  if (!u.alt) u.home = { x: u.x, z: u.z };
   if (u.def.role === 'récolte') u.state = 'idle';
 }
 
@@ -2009,7 +2024,83 @@ function orderStop(u) {
  * un MODE explicite pilote le déplacement, le combat ne fait qu'ouvrir le feu
  * sur ce qui est à portée. Une unité en garde ne poursuit jamais.
  */
+/** Passage en cercle autour d'une cible : un avion ne fait jamais de surplace. */
+function orbitAround(u, t, dt, range) {
+  u.orbit = (u.orbit || 0) + dt * 0.7;
+  const r = Math.max(5, range * 0.62);
+  u.target = { x: t.x + Math.cos(u.orbit) * r, z: t.z + Math.sin(u.orbit) * r };
+}
+
+/**
+ * IA des aéronefs (JetAIUpdate.cpp) : ils volent en permanence, n'atterrissent
+ * QUE sur leur piste, et attaquent en passages circulaires.
+ */
+function updateAircraftAI(u, dt) {
+  const range = u.def.range || 10;
+  u.landed = false;
+
+  if (u.mode === MODE.ATTACK_OBJECT) {
+    const t = u.orderTarget ? getEntity(u.orderTarget) : null;
+    if (!t) {
+      u.orderTarget = null;
+      u.mode = MODE.GUARD;
+      u.target = null;
+      return;
+    }
+    if (Math.hypot(t.x - u.x, t.z - u.z) > range * 1.7) u.target = { x: t.x, z: t.z };
+    else orbitAround(u, t, dt, range);
+    return;
+  }
+
+  if (u.mode === MODE.ATTACK_MOVE) {
+    const t = findTarget(u, range * 1.6);
+    if (t) {
+      if (Math.hypot(t.x - u.x, t.z - u.z) > range * 1.7) u.target = { x: t.x, z: t.z };
+      else orbitAround(u, t, dt, range);
+      return;
+    }
+    if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 2) {
+      u.target = { x: u.dest.x, z: u.dest.z };
+      return;
+    }
+    u.dest = null;
+    u.mode = MODE.GUARD;
+    u.target = null;
+    return;
+  }
+
+  if (u.mode === MODE.MOVE_TO) {
+    if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 2) {
+      u.target = { x: u.dest.x, z: u.dest.z };
+      return;
+    }
+    u.dest = null;
+    u.mode = MODE.GUARD;
+    u.target = null;
+    return;
+  }
+
+  // Garde : retour à la piste, puis posé — jamais ailleurs
+  const pad = u.pad || u.home;
+  if (!pad) { u.target = null; return; }
+
+  // On se pose SUR la piste, pas à 9 unités d'elle
+  if (Math.hypot(pad.x - u.x, pad.z - u.z) > 3) {
+    u.target = { x: pad.x, z: pad.z };
+  } else {
+    u.target = null;
+    u.landed = true;
+  }
+}
+
+/**
+ * Intelligence d'une unité, calquée sur AIUpdate.cpp de Generals :
+ * un MODE explicite pilote le déplacement, le combat ne fait qu'ouvrir le feu
+ * sur ce qui est à portée. Une unité en garde ne poursuit jamais.
+ */
 function updateUnitAI(u, dt) {
+  if (u.alt) { updateAircraftAI(u, dt); return; }
+
   const range = u.def.range || 8;
 
   switch (u.mode) {
@@ -2081,21 +2172,6 @@ function updateUnitAI(u, dt) {
     default: {
       u.target = null;
       break;
-    }
-  }
-
-  // Aéronefs : retour à l'aérodrome et posé quand ils n'ont plus d'ordre
-  if (u.alt) {
-    if (u.mode === MODE.GUARD || u.mode === MODE.IDLE) {
-      if (u.home && Math.hypot(u.home.x - u.x, u.home.z - u.z) > 7) {
-        u.target = { x: u.home.x, z: u.home.z };
-        u.landed = false;
-      } else {
-        u.target = null;
-        u.landed = true;
-      }
-    } else {
-      u.landed = false;
     }
   }
 }

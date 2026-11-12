@@ -387,9 +387,16 @@ il ouvre simplement le feu sur ce qui est à portée.
 | <kbd>C</kbd> | halte (garde sur place) |
 | <kbd>H</kbd> | garde explicite |
 
-**Aéronefs** : altitude de croisière à 9 unités avec ombre portée au sol,
-décollage et atterrissage lissés. Sans ordre et loin de leur base ils y
-retournent, puis se posent (y ≈ 1,4) jusqu'au prochain ordre.
+**Aéronefs** (`JetAIUpdate.cpp`) : ils ne se posent **que sur leur piste**.
+
+- Chaque avion retient l'aérodrome qui l'a produit (`u.pad`) ; un ordre de
+  déplacement ne change jamais ce point d'attache.
+- En assaut, ils ne s'arrêtent pas : ils **tournent autour de la cible** à
+  `portée × 0,62` et tirent en passant (`orbitAround`). Vérifié en jeu : distance
+  figée à 6,2 et angle qui décrit un tour complet — plus de surplace.
+- Sans ordre, ils rentrent à la piste, se posent dessus (≤ 3 unités du centre)
+  et y restent jusqu'au prochain ordre. Touchés au sol, ils décollent.
+- Altitude de croisière 9 avec ombre portée, décollage/atterrissage lissés.
 
 ## Débogage
 
