@@ -13,12 +13,14 @@ import {
   createMoveMarker, createSelectionRing, createGhost, createScaffold, createHealthBar
 } from './assets.js';
 import { Network } from './network.js';
+import { AudioEngine } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------- état */
 
 const net = new Network();
+const audio = new AudioEngine();
 
 const units = new Map();       // id -> unité
 const buildings = new Map();   // id -> bâtiment
@@ -54,8 +56,8 @@ const decorRocks = [];
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const cam = {
   focus: new THREE.Vector3(0, 0, 0),
-  dist: 48,
-  targetDist: 48,
+  dist: 58,
+  targetDist: 58,
   pitch: THREE.MathUtils.degToRad(60)
 };
 
@@ -178,7 +180,7 @@ function updateCamera(dt) {
     return;
   }
 
-  const speed = 26 * (cam.dist / 48);
+  const speed = 30 * (cam.dist / 58);
   let mx = 0;
   let mz = 0;
 
@@ -228,6 +230,17 @@ function setupInput() {
     if (e.code === 'Escape') {
       if (placement) cancelPlacement();
       else clearSelection();
+    }
+
+    if (mode === 'game' && /^Digit[1-9]$/.test(e.code)) {
+      const n = e.code.slice(5);
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); assignGroup(n); }
+      else recallGroup(n);
+    }
+
+    if (mode === 'game' && (e.code === 'Delete' || e.code === 'Backspace')) {
+      e.preventDefault();
+      sellSelected();
     }
   });
 
@@ -280,7 +293,7 @@ function setupInput() {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     if (mode !== 'game') return;
-    cam.targetDist = THREE.MathUtils.clamp(cam.targetDist * (1 + e.deltaY * 0.0012), 18, 110);
+    cam.targetDist = THREE.MathUtils.clamp(cam.targetDist * (1 + e.deltaY * 0.0012), 20, 200);
   }, { passive: false });
 
   // Minimap
@@ -353,6 +366,7 @@ function clickSelect(x, y, additive) {
     selected.add(id);
     if (e.ring) e.ring.visible = true;
   }
+  audio.sfx('select');
   refreshSelection();
 }
 
@@ -377,6 +391,46 @@ function boxSelect(additive) {
     }
   }
   refreshSelection();
+}
+
+function sellBuilding(b) {
+  if (!b || b.owner !== myId || b.type === 'cc') return;
+  money += Math.round(b.def.cost * 0.5);
+  removeEntity(b.id);
+  audio.sfx('cash');
+  toast(`${b.def.name} vendu.`);
+  refreshSelection();
+  updateHud();
+  renderSidebar();
+}
+
+function sellSelected() {
+  const list = [...selected].map(getEntity).filter((e) => e && e.kind === 'building' && e.type !== 'cc');
+  if (!list.length) return;
+  for (const b of list) sellBuilding(b);
+}
+
+const groups = new Map();
+
+function assignGroup(n) {
+  const ids = [...selected].filter((id) => units.has(id));
+  if (!ids.length) return;
+  groups.set(n, ids);
+  toast(`Groupe ${n} : ${ids.length} unité(s).`);
+}
+
+function recallGroup(n) {
+  const ids = groups.get(n);
+  if (!ids || !ids.length) return;
+  clearSelection();
+  for (const id of ids) {
+    const u = units.get(id);
+    if (!u) continue;
+    selected.add(id);
+    if (u.ring) u.ring.visible = true;
+  }
+  refreshSelection();
+  audio.sfx('select');
 }
 
 function clearSelection() {
@@ -621,41 +675,23 @@ function tryPlace(cx, cy) {
   if (money < def.cost) { toast('Fonds insuffisants.'); cancelPlacement(); return; }
 
   money -= def.cost;
-  const builder = [...selected].map(getEntity).find((e) => e && e.kind === 'unit' && e.def.role === 'constructeur');
-  placeBuilding(myId, type, x, z, builder ? builder.id : null);
+  placeBuilding(myId, type, x, z);
   cancelPlacement();
+  audio.sfx('place');
   updateHud();
-  renderCommandPanel();
+  renderSidebar();
 }
 
-function placeBuilding(owner, type, x, z, builderId) {
+function placeBuilding(owner, type, x, z) {
   const def = buildingDef(factionOfOwner(owner), type);
   const id = `${owner}:b${++entitySeq}`;
-  const b = addBuilding({ id, type, owner, x, z, progress: 0, hp: def.hp * 0.15 });
-
-  if (builderId) {
-    const builder = units.get(builderId);
-    if (builder) {
-      builder.state = 'building';
-      builder.buildTarget = id;
-      builder.target = { x: x + (def.w / 2 + 1.5), z: z + (def.d / 2 + 1.5) };
-    }
-  }
-  return b;
+  return addBuilding({ id, type, owner, x, z, progress: 0, hp: def.hp * 0.15 });
 }
 
 function updateConstruction(b, dt) {
   if (b.built) return;
 
-  let builder = null;
-  for (const u of units.values()) {
-    if (u.buildTarget === b.id && u.owner === b.owner) { builder = u; break; }
-  }
-  if (!builder) return;
-
-  const dist = Math.hypot(builder.x - b.x, builder.z - b.z);
-  if (dist > Math.max(b.def.w, b.def.d) / 2 + 3.5) return;
-
+  // Pas d'unité de construction : le chantier avance seul, payé à la pose.
   const rate = (1 / b.def.time) * speedFactor(b.owner) * (b.owner === aiId ? aiSpeed() : 1);
   b.progress = Math.min(1, b.progress + rate * dt);
   b.hp = b.maxHp * (0.15 + 0.85 * b.progress);
@@ -666,15 +702,9 @@ function updateConstruction(b, dt) {
     b.hp = b.maxHp;
     applyBuildVisual(b);
     recomputeEnergy();
-    if (b.owner === myId) toast(`${b.def.name} opérationnel.`);
+    if (b.owner === myId) { toast(`${b.def.name} opérationnel.`); audio.sfx('ready'); }
 
     if (b.def.freeUnit) spawnFromBuilding(b, b.def.freeUnit, true);
-
-    if (builder) {
-      builder.buildTarget = null;
-      builder.state = 'idle';
-      builder.target = null;
-    }
   }
 }
 
@@ -683,8 +713,8 @@ function updateConstruction(b, dt) {
 function queueUnit(b, type) {
   const def = unitDef(b.faction, type);
   if (!def) return;
-  if (money < def.cost) { toast('Fonds insuffisants.'); return; }
-  if (b.queue.length >= 5) { toast('File de production pleine.'); return; }
+  if (money < def.cost) { toast('Fonds insuffisants.'); audio.sfx('error'); return; }
+  if (b.queue.length >= 5) { toast('File de production pleine.'); audio.sfx('error'); return; }
   money -= def.cost;
   b.queue.push({ type, progress: 0 });
   updateHud();
@@ -711,12 +741,14 @@ function spawnFromBuilding(b, type, free) {
 
   const a = Math.random() * Math.PI * 2;
   const r = Math.max(b.def.w, b.def.d) / 2 + 2.5;
-  const x = THREE.MathUtils.clamp(b.x + Math.cos(a) * r, -47, 47);
-  const z = THREE.MathUtils.clamp(b.z + Math.sin(a) * r, -47, 47);
+  const lim = MAP_SIZE / 2 - 3;
+  const x = THREE.MathUtils.clamp(b.x + Math.cos(a) * r, -lim, lim);
+  const z = THREE.MathUtils.clamp(b.z + Math.sin(a) * r, -lim, lim);
 
   const id = `${b.owner}:u${++entitySeq}`;
   const u = addUnit({ id, type, owner: b.owner, x, z, ry: Math.atan2(-Math.cos(a), -Math.sin(a)) });
 
+  if (b.rally) u.target = { x: b.rally.x, z: b.rally.z };
   if (free && b.owner === myId) toast(`${def.name} livré.`);
   return u;
 }
@@ -794,7 +826,7 @@ function updateCollector(u, dt) {
     if (!ref || !ref.built) { u.state = 'idle'; u.target = null; return; }
     if (!u.target) { u.state = 'idle'; return; }
     if (Math.hypot(u.x - u.target.x, u.z - u.target.z) < 1.6) {
-      if (u.owner === myId) money += u.carry;
+      if (u.owner === myId) { money += u.carry; audio.sfx('cash'); }
       else if (isHost && u.owner === aiId) aiMoney += u.carry;
       u.carry = 0;
       u.state = 'idle';
@@ -865,6 +897,7 @@ function updateCombat(u, dt) {
   u.mesh.rotation.y = u.ry;
 
   spawnTracer(u, target);
+  if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
 
   if (isLocal(target.owner)) {
     applyDamage(target, u.def.dmg);
@@ -872,6 +905,8 @@ function updateCombat(u, dt) {
     net.sendHit({ target: target.id, dmg: u.def.dmg });
   }
 }
+
+let lastShotSfx = 0;
 
 function spawnTracer(from, to) {
   const a = new THREE.Vector3(from.x, 1.2, from.z);
@@ -907,13 +942,14 @@ function applyDamage(entity, dmg) {
         if (Math.hypot(e.x - entity.x, e.z - entity.z) < 6) applyDamage(e, 60);
       }
     }
+    audio.sfx('explosion');
     removeEntity(entity.id);
   }
 }
 
 /* --------------------------------------------------------------- brouillard */
 
-const FOG_RES = 192;
+const FOG_RES = 384;
 let fogCanvas, fogCtx, fogTex, fogMesh, exploredCanvas, exploredCtx, visCanvas, visCtx;
 
 function setupFog() {
@@ -971,7 +1007,7 @@ function updateFog() {
   }
   for (const b of buildings.values()) {
     if (b.owner !== myId) continue;
-    const r = Math.max(b.def.w, b.def.d) / 2 + 14;
+    const r = Math.max(b.def.w, b.def.d) / 2 + 20;
     drawSight(visCtx, b.x, b.z, r, 1);
     drawSight(exploredCtx, b.x, b.z, r, 1);
   }
@@ -994,7 +1030,7 @@ function updateFog() {
 function revealStartArea() {
   const cc = [...buildings.values()].find((b) => b.owner === myId && b.type === 'cc');
   if (!cc) return;
-  drawSight(exploredCtx, cc.x, cc.z, 30, 1);
+  drawSight(exploredCtx, cc.x, cc.z, 55, 1);
 }
 
 function isVisibleToMe(x, z, extra = 0) {
@@ -1006,7 +1042,7 @@ function isVisibleToMe(x, z, extra = 0) {
   }
   for (const b of buildings.values()) {
     if (b.owner !== myId) continue;
-    const r = Math.max(b.def.w, b.def.d) / 2 + 14 + extra;
+    const r = Math.max(b.def.w, b.def.d) / 2 + 20 + extra;
     if ((b.x - x) ** 2 + (b.z - z) ** 2 < r * r) return true;
   }
   return false;
@@ -1086,10 +1122,11 @@ function drawMinimap() {
 function updateHud() {
   $('hud-money').textContent = Math.floor(money).toLocaleString('fr-FR');
   $('power-label').textContent = `${energyProd} / ${energyUse}`;
-  const ratio = energyUse === 0 ? 1 : Math.min(1, energyProd / energyUse);
+  const ratio = energyUse === 0 ? (energyProd > 0 ? 1 : 0) : Math.min(1, energyProd / energyUse);
   $('power-fill').style.height = `${Math.max(4, ratio * 100)}%`;
   $('power-fill').classList.toggle('bad', lowPower);
   $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
+  refreshSidebar();
 }
 
 function updateSelectionPanel() {
@@ -1113,35 +1150,70 @@ function renderCommandPanel() {
   if (mode !== 'game' || !selected.size) return;
 
   const sel = [...selected].map(getEntity).filter(Boolean);
-  const builder = sel.find((e) => e.kind === 'unit' && e.def.role === 'constructeur');
-  if (builder) { renderBuildMenu(panel); return; }
-
   const prod = sel.find((e) => e.kind === 'building' && e.built && e.def.produces && e.def.produces.length);
   if (prod) { renderProduceMenu(panel, prod); return; }
+
+  const b = sel.find((e) => e.kind === 'building');
+  if (b && sel.length === 1) { renderBuildingInfo(panel, b); return; }
 }
 
-function renderBuildMenu(panel) {
+function renderBuildingInfo(panel, b) {
   panel.classList.remove('hidden');
   const title = document.createElement('div');
   title.className = 'cmd-title';
-  title.textContent = 'Construction';
+  title.textContent = b.def.name;
   panel.appendChild(title);
 
-  const grid = document.createElement('div');
-  grid.className = 'cmd-grid';
+  const info = document.createElement('div');
+  info.className = 'cmd-desc';
+  const bits = [`${Math.round(b.hp)} / ${b.maxHp} PV`];
+  if (b.def.energy) bits.push(`${b.def.energy > 0 ? '+' : ''}${b.def.energy} ⚡`);
+  if (!b.built) bits.push(`chantier ${Math.round(b.progress * 100)} %`);
+  if (b.rally) bits.push('point de ralliement défini');
+  info.textContent = bits.join(' · ');
+  panel.appendChild(info);
+
+  if (b.type !== 'cc') {
+    const actions = document.createElement('div');
+    actions.className = 'cmd-actions';
+    const sell = document.createElement('button');
+    sell.className = 'cmd-btn';
+    sell.innerHTML = `<span class="cmd-name">Vendre</span><span class="cmd-cost">+$${Math.round(b.def.cost * 0.5).toLocaleString('fr-FR')}</span>`;
+    sell.addEventListener('click', () => sellBuilding(b));
+    actions.appendChild(sell);
+    panel.appendChild(actions);
+  }
+}
+
+/* ------------------------------------------------------- panneau de construction */
+
+let sidebarButtons = new Map();
+
+function renderSidebar() {
+  const list = $('build-list');
+  if (!list) return;
+  list.textContent = '';
+  sidebarButtons = new Map();
+  if (mode !== 'game') return;
 
   for (const def of buildableList(profile.faction)) {
     const btn = document.createElement('button');
-    btn.className = 'cmd-btn';
-    btn.disabled = money < def.cost;
+    btn.className = 'build-btn';
     btn.innerHTML = `
-      <span class="cmd-name">${def.name}</span>
-      <span class="cmd-cost">$${def.cost.toLocaleString('fr-FR')}${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''}</span>
-      <span class="cmd-desc">${def.desc || ''}</span>`;
-    btn.addEventListener('click', () => startPlacement(def.id));
-    grid.appendChild(btn);
+      <span class="b-name">${def.name}</span>
+      <span class="b-cost">$${def.cost.toLocaleString('fr-FR')}</span>
+      <span class="b-meta">${def.time}s${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''} · ${def.desc || ''}</span>`;
+    btn.addEventListener('click', () => { audio.sfx('click'); startPlacement(def.id); });
+    list.appendChild(btn);
+    sidebarButtons.set(def.id, { btn, def });
   }
-  panel.appendChild(grid);
+  refreshSidebar();
+}
+
+function refreshSidebar() {
+  for (const { btn, def } of sidebarButtons.values()) {
+    btn.disabled = money < def.cost;
+  }
 }
 
 function renderProduceMenu(panel, b) {
@@ -1230,11 +1302,8 @@ function aiBuild(type) {
   const spot = aiFindSpot(def);
   if (!spot) return false;
 
-  const builder = [...units.values()].find((u) => u.owner === aiId && u.def.role === 'constructeur' && !u.buildTarget);
-  if (!builder) return false;
-
   aiMoney -= def.cost;
-  placeBuilding(aiId, type, spot.x, spot.z, builder.id);
+  placeBuilding(aiId, type, spot.x, spot.z);
   return true;
 }
 
@@ -1399,8 +1468,9 @@ function updateUnits(dt) {
       }
     }
 
-    u.x = THREE.MathUtils.clamp(u.x, -48, 48);
-    u.z = THREE.MathUtils.clamp(u.z, -48, 48);
+    const lim = MAP_SIZE / 2 - 2;
+    u.x = THREE.MathUtils.clamp(u.x, -lim, lim);
+    u.z = THREE.MathUtils.clamp(u.z, -lim, lim);
     u.mesh.position.set(u.x, 0, u.z);
     u.mesh.rotation.y = u.ry;
 
@@ -1439,6 +1509,17 @@ function issueMoveOrder(e) {
   const point = groundPoint(e.clientX, e.clientY);
   if (!point) return;
 
+  // Bâtiment de production seul sélectionné : clic droit = point de ralliement
+  const sel = [...selected].map(getEntity).filter(Boolean);
+  if (sel.length === 1 && sel[0].kind === 'building' && sel[0].built &&
+      sel[0].def.produces && sel[0].def.produces.length) {
+    sel[0].rally = { x: point.x, z: point.z };
+    addMarker(point.x, point.z);
+    audio.sfx('click');
+    toast('Point de ralliement défini.');
+    return;
+  }
+
   const ids = [...selected].filter((id) => units.has(id));
   if (!ids.length) return;
 
@@ -1452,6 +1533,7 @@ function issueMoveOrder(e) {
   });
 
   addMarker(point.x, point.z);
+  audio.sfx('click');
   net.sendOrder({ ids, x: point.x, z: point.z });
 }
 
@@ -1577,12 +1659,13 @@ function beginMatch(roster, cfg) {
   const myIndex = Math.max(0, players.findIndex((p) => p.id === myId));
   const sp = SPAWNS[myIndex % SPAWNS.length];
   cam.focus.set(sp.x, 0, sp.z);
-  cam.dist = cam.targetDist = 48;
+  cam.dist = cam.targetDist = 58;
 
   matchStart = performance.now();
   revealStartArea();
   net.enterGame(net.myRoom ? net.myRoom.code : 'solo');
   recomputeEnergy();
+  renderSidebar();
   updateHud();
   refreshSelection();
   toast(`Partie lancée — ${settings.money.toLocaleString('fr-FR')} $ de départ.`);
@@ -1590,22 +1673,7 @@ function beginMatch(roster, cfg) {
 
 function spawnBase(player, index) {
   const sp = SPAWNS[index % SPAWNS.length];
-  const face = Math.atan2(-sp.x, -sp.z);
-  const faction = factionOf(player.faction);
-
   addBuilding({ id: `${player.id}:cc`, type: 'cc', owner: player.id, x: sp.x, z: sp.z, progress: 1 });
-
-  const bx = sp.x + Math.sin(face) * 6;
-  const bz = sp.z + Math.cos(face) * 6;
-  const builderType = Object.keys(faction.units).find((k) => faction.units[k].role === 'constructeur');
-  addUnit({
-    id: `${player.id}:builder`,
-    type: builderType,
-    owner: player.id,
-    x: bx,
-    z: bz,
-    ry: face
-  });
 }
 
 function backToLobby() {
@@ -1630,6 +1698,7 @@ function backToLobby() {
   $('hud').classList.add('hidden');
   $('waiting').classList.add('hidden');
   $('lobby').classList.remove('hidden');
+  renderSidebar();
   refreshSelection();
 }
 
@@ -1826,6 +1895,50 @@ function bindLobby() {
   saveProfile();
 }
 
+/* ------------------------------------------------------------ réglages audio */
+
+function setupAudioUI() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('cac.audio') || '{}'); } catch (e) { saved = {}; }
+
+  if (typeof saved.music === 'number') audio.musicVol = saved.music;
+  if (typeof saved.sfx === 'number') audio.sfxVol = saved.sfx;
+  if (typeof saved.musicOn === 'boolean') audio.musicOn = saved.musicOn;
+  if (typeof saved.sfxOn === 'boolean') audio.sfxOn = saved.sfxOn;
+
+  const vm = $('vol-music');
+  const vs = $('vol-sfx');
+  vm.value = Math.round(audio.musicVol * 100);
+  vs.value = Math.round(audio.sfxVol * 100);
+
+  const sync = () => {
+    $('mute-music').textContent = audio.musicOn ? '🔊' : '🔇';
+    $('mute-music').classList.toggle('off', !audio.musicOn);
+    $('mute-sfx').textContent = audio.sfxOn ? '🔊' : '🔇';
+    $('mute-sfx').classList.toggle('off', !audio.sfxOn);
+  };
+
+  const save = () => localStorage.setItem('cac.audio', JSON.stringify({
+    music: audio.musicVol, sfx: audio.sfxVol, musicOn: audio.musicOn, sfxOn: audio.sfxOn
+  }));
+
+  vm.addEventListener('input', () => { audio.setMusicVolume(vm.value / 100); save(); });
+  vs.addEventListener('input', () => { audio.setSfxVolume(vs.value / 100); save(); });
+  $('mute-music').addEventListener('click', () => { audio.setMusicOn(!audio.musicOn); sync(); save(); });
+  $('mute-sfx').addEventListener('click', () => { audio.setSfxOn(!audio.sfxOn); sync(); save(); });
+
+  const open = () => { audio.init(); $('settings-modal').classList.remove('hidden'); };
+  $('btn-settings-lobby').addEventListener('click', open);
+  $('btn-settings-hud').addEventListener('click', open);
+  $('btn-close-settings').addEventListener('click', () => $('settings-modal').classList.add('hidden'));
+
+  // Politique navigateur : l'audio ne démarre qu'après un geste utilisateur
+  const unlock = () => { audio.init(); window.removeEventListener('pointerdown', unlock); };
+  window.addEventListener('pointerdown', unlock);
+
+  sync();
+}
+
 function readSettings() {
   return {
     money: parseInt($('set-money').value, 10) || 5000,
@@ -1893,6 +2006,7 @@ async function boot() {
   setupMinimap();
   setupInput();
   bindLobby();
+  setupAudioUI();
 
   net.on('rooms', renderRooms);
   net.on('roster', showWaiting);
@@ -1924,6 +2038,7 @@ async function boot() {
 /* Point d'entrée de débogage : window.CAC.units, window.CAC.net, … */
 window.CAC = {
   net,
+  audio,
   units,
   buildings,
   fields,

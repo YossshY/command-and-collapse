@@ -5,14 +5,14 @@
  * fichier à éditer pour équilibrer le jeu.
  * ========================================================================== */
 
-export const MAP_SIZE = 100;
+export const MAP_SIZE = 300;
 
 /** Points de départ (4 coins). L'index dans le roster détermine le coin. */
 export const SPAWNS = [
-  { x: -34, z: -34 },
-  { x:  34, z:  34 },
-  { x:  34, z: -34 },
-  { x: -34, z:  34 }
+  { x: -130, z: -130 },
+  { x:  130, z:  130 },
+  { x:  130, z: -130 },
+  { x: -130, z:  130 }
 ];
 
 /**
@@ -23,12 +23,14 @@ export const SPAWNS = [
  * la valeur restante et repoussent d'un cristal toutes les 10 s.
  */
 export const CRYSTAL_FIELDS = [
-  { id: 'g0', x: -22, z: -22, value: 25000, crystals: 44, radius: 6.5, color: '#4ade80', glow: '#22c55e' },
-  { id: 'g1', x:  22, z:  22, value: 25000, crystals: 44, radius: 6.5, color: '#4ade80', glow: '#22c55e' },
-  { id: 'g2', x:  22, z: -22, value: 25000, crystals: 44, radius: 6.5, color: '#4ade80', glow: '#22c55e' },
-  { id: 'g3', x: -22, z:  22, value: 25000, crystals: 44, radius: 6.5, color: '#4ade80', glow: '#22c55e' },
-  { id: 'c0', x:   0, z: -15, value: 50000, crystals: 76, radius: 10,  color: '#38bdf8', glow: '#0ea5e9' },
-  { id: 'c1', x:   0, z:  15, value: 50000, crystals: 76, radius: 10,  color: '#38bdf8', glow: '#0ea5e9' }
+  { id: 'g0', x: -108, z: -108, value: 25000, crystals: 50, radius: 8,  color: '#4ade80', glow: '#22c55e' },
+  { id: 'g1', x:  108, z:  108, value: 25000, crystals: 50, radius: 8,  color: '#4ade80', glow: '#22c55e' },
+  { id: 'g2', x:  108, z: -108, value: 25000, crystals: 50, radius: 8,  color: '#4ade80', glow: '#22c55e' },
+  { id: 'g3', x: -108, z:  108, value: 25000, crystals: 50, radius: 8,  color: '#4ade80', glow: '#22c55e' },
+  { id: 'c0', x:    0, z:  -70, value: 50000, crystals: 80, radius: 12, color: '#38bdf8', glow: '#0ea5e9' },
+  { id: 'c1', x:    0, z:   70, value: 50000, crystals: 80, radius: 12, color: '#38bdf8', glow: '#0ea5e9' },
+  { id: 'c2', x:  -70, z:    0, value: 50000, crystals: 80, radius: 12, color: '#38bdf8', glow: '#0ea5e9' },
+  { id: 'c3', x:   70, z:    0, value: 50000, crystals: 80, radius: 12, color: '#38bdf8', glow: '#0ea5e9' }
 ];
 
 /** Valeur d'un voyage de collecteur. */
@@ -63,8 +65,8 @@ export const FACTIONS = {
     buildings: {
       cc: {
         name: 'Centre de Commandement', cost: 2000, energy: 0, time: 20, hp: 4000,
-        shape: 'cc', w: 7, d: 7, h: 4, produces: ['atlas'],
-        desc: 'Produit le Drone Atlas'
+        shape: 'cc', w: 7, d: 7, h: 4, produces: [],
+        desc: 'Quartier général — construction depuis le panneau latéral'
       },
       power: {
         name: 'Réacteur à Fusion', cost: 800, energy: 10, time: 10, hp: 1200,
@@ -108,7 +110,6 @@ export const FACTIONS = {
       }
     },
     units: {
-      atlas:     { name: 'Drone Atlas', cost: 1000, time: 8,  hp: 300,  speed: 8,  shape: 'builder',     role: 'constructeur', sight: 16 },
       collector: { name: 'Collecteur',  cost: 1000, time: 8,  hp: 400,  speed: 7,  shape: 'collector',   role: 'récolte',      sight: 14 },
       vanguard:  { name: 'Fantassin Vanguard', cost: 250, time: 4, hp: 120, speed: 5, shape: 'infantry', role: 'anti-infanterie', dmg: 12, range: 9,  cd: 0.8, sight: 14 },
       javelin:   { name: 'Équipe Javelin', cost: 400, time: 5, hp: 100, speed: 4.5, shape: 'infantry-at', role: 'antichar/antiaérien', dmg: 30, range: 12, cd: 1.4, sight: 15 },
@@ -130,8 +131,8 @@ export const FACTIONS = {
     buildings: {
       cc: {
         name: 'Quartier Général', cost: 2000, energy: 0, time: 20, hp: 4000,
-        shape: 'cc', w: 7, d: 7, h: 4, produces: ['titan'],
-        desc: 'Produit le Bulldozer Titan'
+        shape: 'cc', w: 7, d: 7, h: 4, produces: [],
+        desc: 'Quartier général — construction depuis le panneau latéral'
       },
       power: {
         name: 'Centrale Thermique', cost: 800, energy: 10, time: 10, hp: 1200,
@@ -175,7 +176,6 @@ export const FACTIONS = {
       }
     },
     units: {
-      titan:     { name: 'Bulldozer Titan', cost: 1000, time: 8,  hp: 300, speed: 7,  shape: 'builder',   role: 'constructeur', sight: 16 },
       collector: { name: 'Collecteur',      cost: 1000, time: 8,  hp: 400, speed: 7,  shape: 'collector', role: 'récolte',      sight: 14 },
       bastion:   { name: 'Garde Bastion',   cost: 300,  time: 5,  hp: 150, speed: 4.5, shape: 'infantry', role: 'bonus de tir en groupe', dmg: 10, range: 9, cd: 0.9, sight: 14, squad: 2 },
       kobra:     { name: 'Chasseur Kobra',  cost: 350,  time: 5,  hp: 110, speed: 5,  shape: 'infantry-at', role: 'antichar', dmg: 28, range: 11, cd: 1.5, sight: 15 },
@@ -197,8 +197,8 @@ export const FACTIONS = {
     buildings: {
       cc: {
         name: 'Bastion Clandestin', cost: 2000, energy: 0, time: 20, hp: 4000,
-        shape: 'cc', w: 7, d: 7, h: 4, produces: ['nomad'],
-        desc: 'Produit le Sapeur Nomade'
+        shape: 'cc', w: 7, d: 7, h: 4, produces: [],
+        desc: 'Quartier général — construction depuis le panneau latéral'
       },
       refinery: {
         name: "Cache d'Approvisionnement", cost: 1500, energy: 0, time: 15, hp: 2000,
@@ -232,7 +232,6 @@ export const FACTIONS = {
       }
     },
     units: {
-      nomad:     { name: 'Sapeur Nomade', cost: 500,  time: 5,  hp: 280, speed: 9,  shape: 'builder',   role: 'constructeur', sight: 16 },
       collector: { name: 'Collecteur',    cost: 1000, time: 8,  hp: 400, speed: 8,  shape: 'collector', role: 'récolte',      sight: 14 },
       milicien:  { name: 'Milicien Rebelle', cost: 150, time: 3, hp: 90,  speed: 5.5, shape: 'infantry', role: 'nombre', dmg: 8, range: 8, cd: 0.7, sight: 14 },
       scorpion:  { name: 'Tireur Scorpion', cost: 300, time: 4, hp: 100, speed: 5, shape: 'infantry-at', role: 'antichar', dmg: 26, range: 11, cd: 1.5, sight: 15 },

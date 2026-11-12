@@ -66,7 +66,7 @@ function cyl(rt, rb, h, seg, material, x = 0, y = 0, z = 0) {
  * le centre, taches de gravier. Une seule texture 2048² pour toute la carte.
  */
 export function createGroundTexture() {
-  const S = 1024;
+  const S = 2048;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = S;
   const ctx = canvas.getContext('2d');
@@ -96,7 +96,7 @@ export function createGroundTexture() {
   }
 
   // Grain fin
-  for (let i = 0; i < 14000; i++) {
+  for (let i = 0; i < 30000; i++) {
     const v = 60 + Math.random() * 60;
     ctx.fillStyle = `rgba(${v + 30},${v + 18},${v},0.16)`;
     ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);
@@ -611,26 +611,6 @@ export function createBuilding(shape, color, faction) {
 /*                                   UNITÉS                                   */
 /* ========================================================================== */
 
-function uBuilder(color, faction) {
-  const g = new THREE.Group();
-  const body = mat(color, { rough: 0.6, metal: 0.2 });
-  const dark = mat(PALETTE.chassis, { rough: 0.85, metal: 0.1 });
-  const metal = mat(PALETTE.metal, { rough: 0.45, metal: 0.4 });
-
-  for (const sx of [-1, 1]) g.add(box(0.45, 0.5, 2.4, dark, sx * 0.72, 0.25, 0));
-  g.add(box(1.4, 0.55, 2.2, body, 0, 0.7, 0));
-  g.add(box(1.0, 0.6, 0.9, mat(PALETTE.glass, { rough: 0.2, metal: 0.5 }), 0, 1.25, -0.3));
-  g.add(box(1.9, 0.7, 0.2, metal, 0, 0.5, 1.35));
-
-  const arm = box(0.16, 0.16, 1.6, metal, 0.5, 1.5, -0.2);
-  arm.rotation.x = -0.5;
-  g.add(arm);
-  g.add(box(0.3, 0.3, 0.3, mat(0xfbbf24, { rough: 0.6 }), 0.5, 1.9, 0.5));
-
-  g.userData = { type: 'builder' };
-  return shade(g);
-}
-
 function uCollector(color, faction) {
   const g = new THREE.Group();
   const body = mat(color, { rough: 0.6, metal: 0.2 });
@@ -891,7 +871,6 @@ function uTruckBomb(color, faction) {
 }
 
 const UNIT_FACTORY = {
-  builder: uBuilder,
   collector: uCollector,
   infantry: uInfantry,
   'infantry-at': uInfantryAT,

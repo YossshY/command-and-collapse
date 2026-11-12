@@ -28,11 +28,11 @@ Aucune installation, aucun compte, aucun backend : tout tourne côté client
 Chaque joueur commence avec **uniquement** :
 
 - 1 Centre de Commandement de sa faction (bâti à 100 %)
-- 1 unité de construction juste devant
 - l'argent de départ choisi dans les paramètres (3 000 / 5 000 / 10 000 / 20 000 $)
 - 0 / 0 d'énergie
 
-Aucune unité de combat au départ : tout passe par le constructeur.
+**Aucune unité de construction** : les bâtiments se paient et se posent
+directement depuis le panneau latéral, puis montent tout seuls.
 
 ### Paramètres de partie (hôte)
 
@@ -81,13 +81,23 @@ La Légion de l'Ombre n'utilise pas d'énergie : tous ses bâtiments sont à 0.
 
 ## 3. Construction
 
-1. Sélectionner un constructeur → le panneau de commandes affiche les bâtiments.
-2. Cliquer sur un bâtiment → **aperçu fantôme 3D** qui suit la souris
+Le **panneau latéral droit** liste en permanence tous les bâtiments de la faction
+avec leur coût, leur temps et leur énergie — comme la barre latérale de Generals.
+
+1. Cliquer sur un bâtiment → **aperçu fantôme 3D** qui suit la souris
    (vert = valide, rouge = bloqué par un bâtiment, un champ de cristaux ou le bord).
-3. Clic gauche → le chantier est posé, le constructeur **se déplace physiquement**
-   jusqu'au site et fait monter le bâtiment de 0 % à 100 % (échafaudage visible).
+2. Clic gauche → l'argent est débité et le chantier est posé.
+3. Le bâtiment monte de 0 % à 100 % **tout seul** (échafaudage visible), à la
+   vitesse `time` de `config.js`, divisée par deux en basse tension.
 
 `Échap` ou clic droit annule l'aperçu.
+
+### Confort façon Generals
+
+- **Point de ralliement** : sélectionner un bâtiment de production, clic droit sur
+  le sol → les unités produites s'y rendent automatiquement.
+- **Groupes de contrôle** : `Ctrl+1`…`Ctrl+9` pour mémoriser, `1`…`9` pour rappeler.
+- **Vente** : `Suppr` (ou bouton « Vendre ») rembourse 50 % du bâtiment sélectionné.
 
 ---
 
@@ -201,11 +211,14 @@ https://cdn.jsdelivr.net/npm/trystero@0.21.5/<mqtt|torrent>/+esm
 
 ## 8. Rendu 3D et caméra
 
-- Terrain **100 × 100** avec texture procédurale (désert, routes d'asphalte vers
+- Terrain **300 × 300** avec texture procédurale (désert, routes d'asphalte vers
   le centre, zones de base damées, gravier autour des cristaux) et rochers 3D.
+  *Référence : dans le World Builder de Generals, 1 tuile = 10 pieds et une carte
+  4-6 joueurs fait 350 × 350 tuiles ; 300 unités se situe entre la carte 2 joueurs
+  (250) et la carte 4 joueurs (350).*
 - Caméra perspective inclinée à **60°**, déplacement `ZQSD`/`WASD`/flèches ou
-  bords d'écran, zoom molette lissé (18 → 110).
-- Brouillard de guerre : texture canvas 192² (exploré persistant + vision
+  bords d'écran, zoom molette lissé (20 → 200).
+- Brouillard de guerre : texture canvas 384² (exploré persistant + vision
   courante), plan semi-transparent au sol et masquage des entités ennemies.
 
 ## 9. Remplacer les placeholders par des `.glb`
@@ -223,6 +236,22 @@ Aucun autre fichier n'a besoin d'être modifié.
 
 ---
 
+## 10. Audio
+
+Aucun fichier audio : **tout est synthétisé en direct** avec la Web Audio API
+(`audio.js`), ce qui évite tout problème de licence et garde le jeu autonome.
+
+- **Musique** : boucle ambient/militaire à 84 BPM — nappe d'accords mineurs
+  (Am–F–C–G) en sawtooth filtré, basse, grosse caisse et charleston, séquencés
+  avec un lookahead de 250 ms.
+- **Effets** : sélection, pose de bâtiment, bâtiment terminé, encaissement,
+  erreur de fonds, tir, explosion.
+- **Réglages** : bouton ⚙ dans le lobby et dans le HUD → deux curseurs
+  (musique / effets) et deux boutons muet. Les valeurs sont conservées dans
+  `localStorage` (`cac.audio`).
+
+Le contexte audio ne démarre qu'au premier clic (politique des navigateurs).
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :
@@ -235,6 +264,7 @@ CAC.net          // couche réseau
 CAC.players      // roster
 CAC.money        // trésorerie locale
 CAC.settings     // paramètres de la partie
+CAC.audio        // moteur audio (ctx, volumes, séquenceur)
 ```
 
 ## Lancer en local
@@ -247,7 +277,7 @@ python3 -m http.server 8080
 ## Limites connues
 
 - Pas de pathfinding : les déplacements sont directs, les unités peuvent se
-  chevaucher et contourner un bâtiment par glissement.
+  chevaucher et traverser les bâtiments.
 - Pas de brouillage effectif pour le Char Tempête (le drapeau `jam` est déclaré
   mais l'effet n'est pas encore implémenté).
 - Pas de téléportation par tunnels (bâtiment décoratif + défense).
