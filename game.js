@@ -889,8 +889,8 @@ function updateFields(dt) {
 
 /* -------------------------------------------------------------------- combat */
 
-function findTarget(u) {
-  const range = u.def.range || 0;
+function findTarget(u, explicitRange) {
+  const range = explicitRange || u.def.range || 0;
   if (!range) return null;
   let best = null;
   let bestD = range;
@@ -932,8 +932,8 @@ function updateCombat(u, dt) {
 
 let lastShotSfx = 0;
 
-function spawnTracer(from, to) {
-  const a = new THREE.Vector3(from.x, 1.2, from.z);
+function spawnTracer(from, to, fromY = 1.2) {
+  const a = new THREE.Vector3(from.x, fromY, from.z);
   const b = new THREE.Vector3(to.x, 1.0, to.z);
   const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
@@ -1438,7 +1438,7 @@ const ICONS = {
   'tank-heavy': '<rect x="2" y="9" width="16" height="8" rx="1"/><rect x="18" y="11" width="4" height="4"/><circle cx="6" cy="19" r="2"/><circle cx="14" cy="19" r="2"/>',
   buggy: '<path d="M3 14h12l3-4h3v7H3z"/><circle cx="7" cy="18" r="2"/><circle cx="16" cy="18" r="2"/>',
   artillery: '<path d="M3 18h12v3H3z"/><path d="M6 18l8-12 3 2-8 10z"/>',
-  aircraft: '<path d="M12 2l3 8h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/>',
+  aircraft: '<path d="M12 2c1 0 1.5 1 1.5 2.5V9l7 4v2l-7-2v4l2.5 2v1.5L12 19l-4 1.5V19L10.5 17v-4l-7 2v-2l7-4V4.5C10.5 3 11 2 12 2z"/>',
   'truck-bomb': '<path d="M3 8h10v8H3z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="16" cy="18" r="2"/>',
   structures: '<path d="M3 21V8l6-4 6 4v13z"/><path d="M15 21V11l6 3v7z"/>',
   defense: '<path d="M12 2 20 5v7c0 5-8 10-8 10S4 17 4 12V5z"/><rect x="11" y="8" width="2" height="7"/>',
@@ -1452,7 +1452,6 @@ function icon(name) {
 
 /* ------------------------------------- grille de construction (façon Generals) */
 
-let gridMode = 'build';   // 'build' | 'produce'
 let gridCat = 'structures';
 let gridRefs = [];
 
@@ -1476,31 +1475,88 @@ function makeCell({ iconName, cost, title, onClick }) {
   };
 }
 
+const TABS = [
+  ['structures', 'Bâtiments', 'structures'],
+  ['defense', 'Défense', 'defense'],
+  ['infantry', 'Infanterie', 'infantry'],
+  ['vehicles', 'Véhicules', 'tank'],
+  ['air', 'Aviation', 'aircraft']
+];
+
+function unitCat(def) {
+  if (def.shape === 'aircraft') return 'air';
+  if (def.shape === 'infantry' || def.shape === 'infantry-at') return 'infantry';
+  return 'vehicles';
+}
+
+/** Unités produisibles par la faction, avec le bâtiment qui les fabrique. */
+function producibleUnits(factionId) {
+  const f = factionOf(factionId);
+  const out = [];
+  const seen = new Set();
+
+  for (const [bid, bdef] of Object.entries(f.buildings)) {
+    for (const t of (bdef.produces || [])) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      const udef = f.units[t];
+      if (!udef) continue;
+      out.push({ type: t, def: udef, from: bid, fromName: bdef.name });
+    }
+  }
+  return out;
+}
+
+/** Contenu d'un onglet : bâtiments ou unités. */
+function tabItems(cat) {
+  if (cat === 'structures' || cat === 'defense') {
+    return buildableList(profile.faction)
+      .filter((d) => (cat === 'defense' ? !!d.defense : !d.defense))
+      .map((d) => ({
+        kind: 'building',
+        type: d.id,
+        def: d,
+        iconName: d.shape,
+        cost: d.cost,
+        title: `${d.name} — ${d.cost} $ · ${d.time}s` +
+          (d.energy ? ` · ${d.energy > 0 ? '+' : ''}${d.energy}⚡` : '') +
+          (d.defense ? ` · ${d.defense.dmg} dégâts / ${d.defense.range} m` : '') +
+          (d.desc ? ` · ${d.desc}` : '')
+      }));
+  }
+
+  return producibleUnits(profile.faction)
+    .filter((u) => unitCat(u.def) === cat)
+    .map((u) => ({
+      kind: 'unit',
+      type: u.type,
+      def: u.def,
+      from: u.from,
+      fromName: u.fromName,
+      iconName: u.def.shape,
+      cost: u.def.cost,
+      title: `${u.def.name} — ${u.def.cost} $ · ${u.def.time}s · ${u.fromName}` +
+        (u.def.role ? ` · ${u.def.role}` : '')
+    }));
+}
+
 function renderTabs() {
   const el = $('build-tabs');
   if (!el) return;
   el.textContent = '';
 
-  if (gridMode === 'produce') {
-    const back = document.createElement('button');
-    back.type = 'button';
-    back.className = 'tab active';
-    back.innerHTML = `${icon('structures')}<span>Construction</span>`;
-    back.addEventListener('click', () => { gridMode = 'build'; renderBuildGrid(); });
-    el.appendChild(back);
-    return;
+  const avail = TABS.filter(([cat]) => tabItems(cat).length > 0);
+  if (!avail.some(([cat]) => cat === gridCat)) {
+    gridCat = avail.length ? avail[0][0] : 'structures';
   }
 
-  const cats = [
-    ['structures', 'Bâtiments', 'structures'],
-    ['defense', 'Défense', 'defense']
-  ];
-
-  for (const [cat, label, ic] of cats) {
+  for (const [cat, label, ic] of avail) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'tab' + (gridCat === cat ? ' active' : '');
-    b.innerHTML = `${icon(ic)}<span>${label}</span>`;
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = icon(ic);
     b.addEventListener('click', () => { gridCat = cat; renderBuildGrid(); });
     el.appendChild(b);
   }
@@ -1513,54 +1569,57 @@ function renderBuildGrid() {
   gridRefs = [];
   if (mode !== 'game') return;
 
-  // Un bâtiment de production sélectionné prend la main sur la grille
-  const sel = [...selected].map(getEntity).filter(Boolean);
-  const prod = sel.length === 1 && sel[0].kind === 'building' && sel[0].built &&
-    sel[0].def.produces && sel[0].def.produces.length ? sel[0] : null;
+  renderTabs();
 
-  if (prod) {
-    gridMode = 'produce';
-    renderTabs();
+  for (const it of tabItems(gridCat)) {
+    const cell = makeCell({
+      iconName: it.iconName,
+      cost: it.cost,
+      title: it.title,
+      onClick: () => {
+        if (it.kind === 'building') {
+          audio.sfx('click');
+          startPlacement(it.type);
+        } else {
+          queueUnitAnywhere(it.type);
+        }
+      }
+    });
+    grid.appendChild(cell.el);
+    gridRefs.push({ ...cell, ...it });
+  }
 
-    for (const type of prod.def.produces) {
-      const def = unitDef(prod.faction, type);
-      if (!def) continue;
-      const cell = makeCell({
-        iconName: def.shape,
-        cost: def.cost,
-        title: `${def.name} — ${def.cost} $ · ${def.time}s${def.role ? ` · ${def.role}` : ''}`,
-        onClick: () => { queueUnit(prod, type); renderBuildGrid(); }
-      });
-      grid.appendChild(cell.el);
-      gridRefs.push({ ...cell, kind: 'unit', def, building: prod, type });
-    }
-    refreshBuildGrid();
+  refreshBuildGrid();
+}
+
+/** File d'attente vers le premier bâtiment construit qui produit ce type. */
+function queueUnitAnywhere(type) {
+  const def = unitDef(profile.faction, type);
+  if (!def) return;
+
+  let producer = null;
+  for (const b of buildings.values()) {
+    if (b.owner !== myId || !b.built) continue;
+    if (b.def.produces && b.def.produces.includes(type)) { producer = b; break; }
+  }
+
+  if (!producer) {
+    const f = factionOf(profile.faction);
+    const need = Object.values(f.buildings).find((bd) => (bd.produces || []).includes(type));
+    toast(need ? `Nécessite : ${need.name}.` : 'Aucun bâtiment ne produit cette unité.');
+    audio.sfx('error');
     return;
   }
 
-  gridMode = 'build';
-  renderTabs();
-
-  for (const def of buildableList(profile.faction)) {
-    const cat = def.defense ? 'defense' : 'structures';
-    if (cat !== gridCat) continue;
-
-    const cell = makeCell({
-      iconName: def.shape,
-      cost: def.cost,
-      title: `${def.name} — ${def.cost} $ · ${def.time}s${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''}${def.desc ? ` · ${def.desc}` : ''}`,
-      onClick: () => { audio.sfx('click'); startPlacement(def.id); }
-    });
-    grid.appendChild(cell.el);
-    gridRefs.push({ ...cell, kind: 'building', def, type: def.id });
-  }
-  refreshBuildGrid();
+  queueUnit(producer, type);
+  renderBuildGrid();
 }
 
 function refreshBuildGrid() {
   for (const r of gridRefs) {
     if (r.kind === 'building') {
-      r.el.disabled = money < r.def.cost;
+      r.el.disabled = false;
+      r.el.classList.toggle('locked', money < r.def.cost);
 
       let site = null;
       for (const b of buildings.values()) {
@@ -1574,23 +1633,31 @@ function refreshBuildGrid() {
         r.fill.style.height = '0';
         r.pct.textContent = '';
       }
-    } else {
-      const q = r.building.queue;
-      r.el.disabled = money < r.def.cost || q.length >= 5;
-
-      const job = q.find((j) => j.type === r.type);
-      if (job) {
-        const p = Math.round(job.progress * 100);
-        r.fill.style.height = `${p}%`;
-        r.pct.textContent = `${p}%`;
-      } else {
-        r.fill.style.height = '0';
-        r.pct.textContent = '';
-      }
-
-      const n = q.filter((j) => j.type === r.type).length;
-      r.queue.textContent = n > 1 ? `×${n}` : '';
+      r.queue.textContent = '';
+      continue;
     }
+
+    let producer = null;
+    for (const b of buildings.values()) {
+      if (b.owner !== myId || !b.built) continue;
+      if (b.def.produces && b.def.produces.includes(r.type)) { producer = b; break; }
+    }
+
+    r.el.disabled = false;
+    r.el.classList.toggle('locked', !producer || money < r.def.cost || producer.queue.length >= 5);
+
+    const job = producer ? producer.queue.find((j) => j.type === r.type) : null;
+    if (job) {
+      const p = Math.round(job.progress * 100);
+      r.fill.style.height = `${p}%`;
+      r.pct.textContent = `${p}%`;
+    } else {
+      r.fill.style.height = '0';
+      r.pct.textContent = '';
+    }
+
+    const n = producer ? producer.queue.filter((j) => j.type === r.type).length : 0;
+    r.queue.textContent = n > 1 ? `×${n}` : '';
   }
 }
 
@@ -1858,7 +1925,35 @@ function updateBuildings(dt) {
     if (!isLocal(b.owner)) continue;
     updateConstruction(b, dt);
     updateProduction(b, dt);
+    updateDefense(b, dt);
   }
+}
+
+/** Tourelles et batteries : acquisition de cible, tir, rotation du fût. */
+function updateDefense(b, dt) {
+  const d = b.def.defense;
+  if (!d || !b.built) return;
+
+  b.cd -= dt;
+  if (b.cd > 0) return;
+
+  const target = findTarget(b, d.range);
+  if (!target) return;
+
+  b.cd = d.cd;
+
+  // Rotation du fût vers la cible
+  const spin = b.mesh.userData && b.mesh.userData.spin;
+  if (spin) {
+    const want = Math.atan2(target.x - b.x, target.z - b.z);
+    spin.rotation.y = want;
+  }
+
+  spawnTracer(b, target, (b.def.h || 3) * 0.75);
+  if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
+
+  if (isLocal(target.owner)) applyDamage(target, d.dmg);
+  else net.sendHit({ target: target.id, dmg: d.dmg });
 }
 
 /* ------------------------------------------------------------------- ordres */

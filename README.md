@@ -92,9 +92,20 @@ onglets (**Bâtiments** / **Défense**).
    vitesse `time` de `config.js`, divisée par deux en basse tension.
    La case affiche alors un remplissage bleu et son pourcentage.
 
-**Sélectionner un bâtiment de production** (caserne, usine, aérodrome, dépôt)
-bascule la même grille sur ses unités — exactement le comportement de Generals.
-L'onglet devient « Construction » pour revenir en arrière.
+**Tout se fait depuis la colonne de droite**, sans jamais devoir sélectionner un
+bâtiment. Cinq onglets, comme dans Generals :
+
+| Onglet | Contenu |
+|---|---|
+| Bâtiments | réacteur, dépôt, caserne, usine, aérodrome, recherche |
+| Défense | tourelle Gatling, batterie Patriot |
+| Infanterie | fantassins et équipes antichar |
+| Véhicules | collecteurs, buggies, chars, artillerie |
+| Aviation | intercepteurs et bombardiers |
+
+Cliquer une unité la met en file **dans le premier bâtiment construit qui la
+produit**. Si aucun bâtiment ne la fabrique, la case est grisée et le clic
+explique quoi construire (« Nécessite : Caserne Tactique. »).
 
 `Échap` ou clic droit annule l'aperçu.
 
@@ -312,7 +323,25 @@ Le HUD reprend la disposition de *Heure H* :
 Les icônes sont des SVG inline (`ICONS` dans `game.js`) : aucun fichier image,
 donc rien à héberger et un rendu net à toutes les tailles.
 
-## 13. Pause
+## 13. Bâtiments de défense
+
+Les tourelles et batteries (`def.defense` dans `config.js`) sont **armées** :
+
+- acquisition automatique de la cible la plus proche **à portée** (unités
+  d'abord, puis bâtiments), sans ordre du joueur ;
+- rotation du fût vers la cible (`userData.spin` du modèle 3D) ;
+- tir avec traceur, cadence et dégâts propres à chaque défense ;
+- dégâts appliqués par le propriétaire de la cible (même règle que les unités),
+  donc pas de divergence entre clients.
+
+| Défense | Dégâts | Portée | Cadence |
+|---|---|---|---|
+| Tourelle Gatling | 14 | 16 m | 0,35 s |
+| Batterie Patriot | 55 | 24 m | 1,8 s |
+
+L'IA en construit jusqu'à deux, elles défendent donc aussi sa base.
+
+## 14. Pause
 
 Bouton ⏸ de la barre de commandement, ou <kbd>P</kbd> / <kbd>Espace</kbd>.
 

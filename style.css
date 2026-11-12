@@ -688,12 +688,11 @@ input[type="range"]::-moz-range-thumb {
 
 .tab {
   flex: 1;
-  height: 26px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 0 6px;
+  padding: 0;
   background: linear-gradient(180deg, #16212c, #0a1016);
   border: 1px solid #2a3d4f;
   border-radius: 4px;
@@ -708,7 +707,7 @@ input[type="range"]::-moz-range-thumb {
   overflow: hidden;
 }
 
-.tab svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.tab svg { width: 15px; height: 15px; flex: 0 0 auto; }
 
 .tab:hover { color: #b6d4e8; border-color: #3f7fa8; }
 
@@ -764,6 +763,10 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .build-cell:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Verrouillée : cliquable quand même, pour afficher la raison */
+.build-cell.locked { opacity: 0.4; }
+.build-cell.locked:hover { border-color: #7a4a4a; color: #d9a0a0; }
 
 .build-cell .bc-icon { display: flex; }
 .build-cell .bc-icon svg { width: 23px; height: 23px; display: block; }
