@@ -252,6 +252,43 @@ Aucun fichier audio : **tout est synthétisé en direct** avec la Web Audio API
 
 Le contexte audio ne démarre qu'au premier clic (politique des navigateurs).
 
+## 11. Barres d'état et retours visuels
+
+Toutes les barres sont des plans 3D orientés vers la caméra (`createBar` /
+`setBar` dans `assets.js`), dessinés au-dessus de la scène.
+
+**Barres de vie** — au-dessus de chaque unité et de chaque bâtiment :
+
+| Couleur | Seuil | Sens |
+|---|---|---|
+| Vert | > 60 % | en forme |
+| Orange | 30 – 60 % | endommagé |
+| Rouge | < 30 % | critique |
+
+Elles s'affichent pour tes unités (option « Barres de vie toujours visibles »,
+activée par défaut), pour toute entité sélectionnée, et pour toute entité
+ennemie **endommagée** — comme dans Generals, où les barres adverses
+n'apparaissent qu'au combat.
+
+**Barres de progression** :
+
+- **Chantier** : la barre du bâtiment passe en orange et suit la construction
+  de 0 à 100 %.
+- **Collecteur** : une seconde barre sous la vie montre le cycle de récolte —
+  bleue pendant l'extraction (`HARVEST_TIME`), orange pendant le retour chargé
+  (cargaison / `HARVEST_LOAD`).
+- **Production** : la file d'attente de chaque bâtiment est visible dans le
+  panneau contextuel et dans la barre du bas.
+
+**Barre de chantiers (bas d'écran)** : un bandeau permanent en bas de page
+liste tous tes chantiers et toutes tes productions en cours avec leur
+pourcentage, pour ne jamais perdre le fil quand la caméra est ailleurs.
+
+**Panneau de sélection (bas gauche)** : nom, barre de vie chiffrée, puis les
+caractéristiques de l'entité — dégâts, portée, vitesse, rôle, état courant,
+cargaison pour les collecteurs, énergie et file de production pour les
+bâtiments. Sur une sélection multiple : total des PV et répartition par type.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :

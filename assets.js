@@ -961,20 +961,52 @@ export function createScaffold(w, h, d) {
   return g;
 }
 
-/** Barre de vie (fond + remplissage). */
-export function createHealthBar() {
+/**
+ * Barre d'état (fond + remplissage ancré à gauche), façon C&C.
+ * Toujours dessinée au-dessus de la scène (depthTest désactivé) et orientée
+ * vers la caméra par le jeu.
+ *
+ * @param {{width?:number, height?:number, color?:number, bg?:number}} opts
+ */
+export function createBar({ width = 1.8, height = 0.16, color = 0x4ade80, bg = 0x05070a } = {}) {
   const g = new THREE.Group();
-  const bg = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 0.13),
-    new THREE.MeshBasicMaterial({ color: 0x0a0c0f, transparent: true, opacity: 0.8, depthWrite: false })
+
+  const bgMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(width + 0.06, height + 0.06),
+    new THREE.MeshBasicMaterial({
+      color: bg, transparent: true, opacity: 0.85,
+      depthWrite: false, depthTest: false
+    })
   );
+  bgMesh.renderOrder = 20;
+  g.add(bgMesh);
+
+  // Géométrie décalée pour que le pivot soit au bord gauche
+  const geo = new THREE.PlaneGeometry(width, height);
+  geo.translate(width / 2, 0, 0);
   const fill = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 0.09),
-    new THREE.MeshBasicMaterial({ color: 0x4ade80, depthWrite: false })
+    geo,
+    new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, depthTest: false })
   );
-  fill.position.z = 0.002;
-  g.add(bg);
+  fill.position.set(-width / 2, 0, 0.001);
+  fill.renderOrder = 21;
   g.add(fill);
-  g.userData.fill = fill;
+
+  g.userData = { fill, bgMesh, width, height };
+  g.renderOrder = 20;
   return g;
+}
+
+/** Renseigne une barre : ratio 0..1 et couleur optionnelle. */
+export function setBar(bar, ratio, color) {
+  if (!bar) return;
+  const { fill } = bar.userData;
+  const r = Math.max(0, Math.min(1, ratio));
+  fill.scale.x = Math.max(0.0001, r);
+  if (color != null) fill.material.color.setHex(color);
+}
+
+/** Ancien nom conservé pour compatibilité. */
+export function createHealthBar(opts) {
+  return createBar(opts);
 }

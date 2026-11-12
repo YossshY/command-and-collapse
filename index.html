@@ -67,13 +67,15 @@
   <div id="cmd-panel" class="cmd-panel hidden"></div>
 
   <div class="hud-bottom">
-    <div id="hud-selection" class="panel">Aucune sélection</div>
-    <div class="hud-hint">
-      <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> multiple ·
-      <kbd>Clic droit</kbd> déplacement / point de ralliement ·
-      <kbd>ZQSD</kbd> caméra · <kbd>Molette</kbd> zoom ·
-      <kbd>Ctrl+1-9</kbd> groupes · <kbd>Suppr</kbd> vendre · <kbd>Échap</kbd> annuler
-    </div>
+    <div id="hud-selection" class="panel sel-panel">Aucune sélection</div>
+    <div id="build-bar" class="build-bar hidden"></div>
+  </div>
+
+  <div class="hud-hint">
+    <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> multiple ·
+    <kbd>Clic droit</kbd> déplacement / ralliement ·
+    <kbd>ZQSD</kbd> caméra · <kbd>Molette</kbd> zoom ·
+    <kbd>Ctrl+1-9</kbd> groupes · <kbd>Suppr</kbd> vendre · <kbd>Échap</kbd> annuler
   </div>
 
   <div id="select-box" class="hidden"></div>
@@ -187,6 +189,11 @@
         <label class="set check">
           <input type="checkbox" id="set-fog" checked />
           <span>Brouillard de guerre</span>
+        </label>
+
+        <label class="set check">
+          <input type="checkbox" id="set-bars" checked />
+          <span>Barres de vie toujours visibles</span>
         </label>
       </div>
     </div>

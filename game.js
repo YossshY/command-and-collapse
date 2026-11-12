@@ -10,7 +10,8 @@ import {
 } from './config.js';
 import {
   createBuilding, createUnit, createCrystalField, createGroundTexture, createRock,
-  createMoveMarker, createSelectionRing, createGhost, createScaffold, createHealthBar
+  createMoveMarker, createSelectionRing, createGhost, createScaffold,
+  createBar, setBar
 } from './assets.js';
 import { Network } from './network.js';
 import { AudioEngine } from './audio.js';
@@ -40,7 +41,7 @@ let energyUse = 0;
 let lowPower = false;
 let entitySeq = 0;
 
-let settings = { money: 5000, fog: true, ai: 'none' };
+let settings = { money: 5000, fog: true, ai: 'none', alwaysBars: true };
 
 const profile = {
   name: localStorage.getItem('cac.name') || '',
@@ -487,16 +488,28 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
   const ring = makeRing(def.shape === 'infantry' || def.shape === 'infantry-at' ? 1.6 : 2.2, 0x8ef7b0);
   mesh.add(ring);
 
-  const bar = createHealthBar();
-  bar.rotation.x = -Math.PI / 2;
-  bar.position.y = 2.4;
+  const small = def.shape === 'infantry' || def.shape === 'infantry-at';
+  const barW = small ? 1.25 : 1.9;
+  const barY = small ? 1.75 : 2.35;
+
+  const bar = createBar({ width: barW, height: 0.18 });
+  bar.position.y = barY;
   bar.visible = false;
   mesh.add(bar);
+
+  // Collecteurs : barre de cargaison / progression de récolte
+  let carryBar = null;
+  if (def.role === 'récolte') {
+    carryBar = createBar({ width: barW, height: 0.09, color: 0xfbbf24 });
+    carryBar.position.y = barY - 0.24;
+    carryBar.visible = false;
+    mesh.add(carryBar);
+  }
 
   scene.add(mesh);
 
   const unit = {
-    id, kind: 'unit', type, owner, faction, def, mesh, ring, bar,
+    id, kind: 'unit', type, owner, faction, def, mesh, ring, bar, carryBar,
     x, z, ry,
     hp: hp == null ? def.hp : hp,
     maxHp: def.hp,
@@ -504,6 +517,8 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
     state: 'idle',
     cd: Math.random() * 0.5,
     carry: 0,
+    carryMax: HARVEST_LOAD,
+    harvestT: 0,
     fieldId: null,
     buildTarget: null,
     netPos: new THREE.Vector3(x, 0, z),
@@ -526,9 +541,8 @@ function addBuilding({ id, type, owner, x, z, progress = 1, hp = null }) {
   const ring = makeRing(Math.max(def.w, def.d) * 0.62, 0x8ef7b0);
   mesh.add(ring);
 
-  const bar = createHealthBar();
-  bar.rotation.x = -Math.PI / 2;
-  bar.position.y = def.h + 0.6;
+  const bar = createBar({ width: Math.max(def.w, def.d) * 0.78, height: 0.3 });
+  bar.position.y = def.h + 0.9;
   bar.visible = false;
   mesh.add(bar);
 
@@ -1119,6 +1133,73 @@ function drawMinimap() {
 
 /* ---------------------------------------------------------------------- HUD */
 
+/* ------------------------------------------------------- barres d'état 3D */
+
+const _camQ = new THREE.Quaternion();
+const _parQ = new THREE.Quaternion();
+
+/** Oriente une barre face à la caméra, quelle que soit la rotation du parent. */
+function faceBar(bar, parent) {
+  parent.getWorldQuaternion(_parQ);
+  _parQ.invert();
+  bar.quaternion.copy(_parQ.multiply(camera.quaternion));
+}
+
+/** Vert > 60 %, orange 30-60 %, rouge < 30 % — comme dans C&C. */
+function hpColor(ratio) {
+  if (ratio > 0.6) return 0x4ade80;
+  if (ratio > 0.3) return 0xfbbf24;
+  return 0xf87171;
+}
+
+function updateBars() {
+  const always = settings.alwaysBars !== false;
+
+  for (const u of units.values()) {
+    const ratio = u.maxHp > 0 ? u.hp / u.maxHp : 0;
+    // Les barres ennemies n'apparaissent que si l'unité est touchée ou sélectionnée
+    const show = (always && isLocal(u.owner)) || selected.has(u.id) || ratio < 0.999;
+    u.bar.visible = show;
+    if (show) {
+      setBar(u.bar, ratio, hpColor(ratio));
+      faceBar(u.bar, u.mesh);
+    }
+
+    if (u.carryBar) {
+      let p = 0;
+      let col = 0xfbbf24;
+      if (u.state === 'harvesting') {
+        p = Math.min(1, u.harvestT / HARVEST_TIME);
+        col = 0x38bdf8;
+      } else if (u.state === 'toRefinery') {
+        p = u.carry / u.carryMax;
+        col = 0xfbbf24;
+      }
+      const showCarry = p > 0.002 && (always || selected.has(u.id) || u.state === 'harvesting');
+      u.carryBar.visible = showCarry;
+      if (showCarry) {
+        setBar(u.carryBar, p, col);
+        faceBar(u.carryBar, u.mesh);
+      }
+    }
+  }
+
+  for (const b of buildings.values()) {
+    const ratio = b.maxHp > 0 ? b.hp / b.maxHp : 0;
+    const building = !b.built;
+    const show = building || (always && isLocal(b.owner)) || selected.has(b.id) || ratio < 0.999;
+    b.bar.visible = show;
+    if (!show) continue;
+
+    if (building) setBar(b.bar, b.progress, 0xfbbf24);
+    else setBar(b.bar, ratio, hpColor(ratio));
+
+    // Le bâtiment en construction est mis à l'échelle : on compense sur la barre
+    b.bar.scale.y = 1 / Math.max(0.05, b.mesh.scale.y);
+    faceBar(b.bar, b.mesh);
+  }
+}
+
 function updateHud() {
   $('hud-money').textContent = Math.floor(money).toLocaleString('fr-FR');
   $('power-label').textContent = `${energyProd} / ${energyUse}`;
@@ -1127,20 +1208,170 @@ function updateHud() {
   $('power-fill').classList.toggle('bad', lowPower);
   $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
   refreshSidebar();
+  renderBuildBar();
+}
+
+const STATE_LABEL = {
+  idle: 'au repos',
+  move: 'en mouvement',
+  attack: 'au combat',
+  toField: 'vers le gisement',
+  harvesting: 'récolte en cours',
+  toRefinery: 'retour raffinerie'
+};
+
+function cssHp(ratio) {
+  if (ratio > 0.6) return '#4ade80';
+  if (ratio > 0.3) return '#fbbf24';
+  return '#f87171';
+}
+
+function hpBarHtml(ratio) {
+  return `<div class="sel-bar"><i style="width:${(Math.max(0, Math.min(1, ratio)) * 100).toFixed(1)}%;background:${cssHp(ratio)}"></i></div>`;
+}
+
+function singleEntityHtml(e) {
+  const ratio = e.maxHp ? e.hp / e.maxHp : 0;
+  const rows = [];
+
+  if (e.kind === 'unit') {
+    if (e.def.dmg) rows.push(['Dégâts', e.def.dmg]);
+    if (e.def.range) rows.push(['Portée', `${e.def.range} m`]);
+    if (e.def.speed) rows.push(['Vitesse', e.def.speed]);
+    if (e.def.role) rows.push(['Rôle', e.def.role]);
+    if (e.def.role === 'récolte') {
+      rows.push(['Cargaison', `${Math.round(e.carry)} / ${e.carryMax} $`]);
+    }
+    rows.push(['État', STATE_LABEL[e.state] || e.state]);
+  } else {
+    if (e.def.energy) rows.push(['Énergie', `${e.def.energy > 0 ? '+' : ''}${e.def.energy} ⚡`]);
+    if (!e.built) rows.push(['Chantier', `${Math.round(e.progress * 100)} %`]);
+    if (e.queue && e.queue.length) {
+      const job = e.queue[0];
+      const d = unitDef(e.faction, job.type);
+      rows.push(['En cours', `${d ? d.name : job.type} — ${Math.round(job.progress * 100)} %`]);
+      if (e.queue.length > 1) rows.push(['File', `${e.queue.length - 1} en attente`]);
+    }
+    if (e.rally) rows.push(['Ralliement', 'défini']);
+  }
+
+  return `
+    <div class="sel-head">${e.def.name}</div>
+    ${hpBarHtml(ratio)}
+    <div class="sel-hp">${Math.ceil(e.hp)} / ${e.maxHp} PV</div>
+    <div class="sel-stats">${rows.map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('')}</div>`;
 }
 
 function updateSelectionPanel() {
   const el = $('hud-selection');
   if (!el) return;
-  if (!selected.size) { el.textContent = 'Aucune sélection'; return; }
+
+  const ents = [...selected].map(getEntity).filter(Boolean);
+  if (!ents.length) {
+    el.innerHTML = '<span class="muted">Aucune sélection</span>';
+    return;
+  }
+
+  if (ents.length === 1) {
+    el.innerHTML = singleEntityHtml(ents[0]);
+    return;
+  }
 
   const counts = new Map();
-  for (const id of selected) {
-    const e = getEntity(id);
-    if (!e) continue;
+  let hp = 0;
+  let maxHp = 0;
+  for (const e of ents) {
     counts.set(e.def.name, (counts.get(e.def.name) || 0) + 1);
+    hp += e.hp;
+    maxHp += e.maxHp;
   }
-  el.textContent = [...counts.entries()].map(([l, n]) => `${n} × ${l}`).join(' · ');
+  const ratio = maxHp ? hp / maxHp : 0;
+
+  el.innerHTML = `
+    <div class="sel-head">${ents.length} unités sélectionnées</div>
+    ${hpBarHtml(ratio)}
+    <div class="sel-hp">${Math.ceil(hp)} / ${maxHp} PV</div>
+    <div class="sel-stats">${[...counts.entries()].map(([l, n]) => `<span><b>${n} ×</b> ${l}</span>`).join('')}</div>`;
+}
+
+/* ------------------------------------------- barre de chantiers (bas d'écran) */
+
+let buildBarSig = '';
+let buildBarRefs = [];
+
+function renderBuildBar() {
+  const el = $('build-bar');
+  if (!el) return;
+
+  if (mode !== 'game') {
+    el.classList.add('hidden');
+    el.textContent = '';
+    buildBarSig = '';
+    buildBarRefs = [];
+    return;
+  }
+
+  const items = [];
+  for (const b of buildings.values()) {
+    if (b.owner !== myId) continue;
+
+    if (!b.built) {
+      items.push({
+        key: `${b.id}:c`, kind: 'Chantier', name: b.def.name,
+        p: b.progress, color: '#fbbf24', extra: ''
+      });
+    } else if (b.queue && b.queue.length) {
+      const job = b.queue[0];
+      const def = unitDef(b.faction, job.type);
+      items.push({
+        key: `${b.id}:p`, kind: 'Production',
+        name: def ? def.name : job.type,
+        p: job.progress, color: '#38bdf8',
+        extra: b.queue.length > 1 ? `+${b.queue.length - 1}` : ''
+      });
+    }
+  }
+
+  if (!items.length) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    buildBarSig = '';
+    buildBarRefs = [];
+    return;
+  }
+
+  el.classList.remove('hidden');
+  const sig = items.map((i) => `${i.key}|${i.name}|${i.extra}`).join('~');
+
+  if (sig !== buildBarSig) {
+    buildBarSig = sig;
+    el.textContent = '';
+    buildBarRefs = [];
+
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'bb-row';
+      row.innerHTML = `
+        <span class="bb-kind">${it.kind}</span>
+        <span class="bb-name">${it.name}${it.extra ? ` <em>${it.extra}</em>` : ''}</span>
+        <span class="bb-track"><i></i></span>
+        <span class="bb-pct">0 %</span>`;
+      el.appendChild(row);
+      buildBarRefs.push({
+        fill: row.querySelector('.bb-track i'),
+        pct: row.querySelector('.bb-pct')
+      });
+    }
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const ref = buildBarRefs[i];
+    if (!ref) continue;
+    const pct = Math.max(0, Math.min(1, items[i].p));
+    ref.fill.style.width = `${(pct * 100).toFixed(1)}%`;
+    ref.fill.style.background = items[i].color;
+    ref.pct.textContent = `${Math.round(pct * 100)} %`;
+  }
 }
 
 function renderCommandPanel() {
@@ -1153,8 +1384,9 @@ function renderCommandPanel() {
   const prod = sel.find((e) => e.kind === 'building' && e.built && e.def.produces && e.def.produces.length);
   if (prod) { renderProduceMenu(panel, prod); return; }
 
+  // Le panneau central ne sert que s'il y a une action possible
   const b = sel.find((e) => e.kind === 'building');
-  if (b && sel.length === 1) { renderBuildingInfo(panel, b); return; }
+  if (b && sel.length === 1 && b.type !== 'cc') { renderBuildingInfo(panel, b); return; }
 }
 
 function renderBuildingInfo(panel, b) {
@@ -1625,7 +1857,7 @@ function sweepRemote() {
 
 function beginMatch(roster, cfg) {
   players = roster.slice();
-  settings = Object.assign({ money: 5000, fog: true, ai: 'none' }, cfg || {});
+  settings = Object.assign({ money: 5000, fog: true, ai: 'none', alwaysBars: true }, cfg || {});
   myId = net.selfId;
   isHost = !!(net.myRoom && net.myRoom.isHost);
   mode = 'game';
@@ -1950,6 +2182,7 @@ function readSettings() {
   return {
     money: parseInt($('set-money').value, 10) || 5000,
     fog: $('set-fog').checked,
+    alwaysBars: $('set-bars').checked,
     ai: $('set-ai').value
   };
 }
@@ -1985,6 +2218,7 @@ function animate() {
     updateMarkers(dt);
     updateTracers(dt);
     updateAI(dt);
+    updateBars();
 
     syncAcc += dt;
     if (syncAcc >= 0.1) { syncAcc = 0; broadcastState(); }

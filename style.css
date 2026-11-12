@@ -774,7 +774,7 @@ input[type="range"]::-moz-range-thumb {
 .cmd-panel {
   position: absolute;
   left: 50%;
-  bottom: 78px;
+  bottom: 152px;
   transform: translateX(-50%);
   width: min(680px, calc(100vw - 620px));
   padding: 10px 12px;
@@ -856,11 +856,132 @@ input[type="range"]::-moz-range-thumb {
   position: absolute;
   left: 220px;
   right: 280px;
-  bottom: 14px;
+  bottom: 30px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* --------------------------------------------------- panneau de sélection */
+
+.sel-panel {
+  flex: 0 0 300px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.sel-head {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-bottom: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sel-bar {
+  height: 7px;
+  background: rgba(6, 10, 14, 0.9);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sel-bar i {
+  display: block;
+  height: 100%;
+  transition: width 0.2s;
+}
+
+.sel-hp {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.sel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.sel-stats b { color: var(--text); font-weight: 600; }
+
+/* ------------------------------------------- barre de chantiers (bas d'écran) */
+
+.build-bar {
+  flex: 1;
+  min-width: 0;
+  max-height: 112px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.build-bar::-webkit-scrollbar { width: 6px; }
+.build-bar::-webkit-scrollbar-thumb {
+  background: rgba(120, 190, 220, 0.25);
+  border-radius: 3px;
+}
+
+.bb-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) minmax(56px, 1.3fr) 38px;
   align-items: center;
   gap: 8px;
+  font-size: 11px;
+}
+
+.bb-kind {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bb-name em {
+  color: var(--accent-2);
+  font-style: normal;
+  font-size: 10px;
+}
+
+.bb-track {
+  height: 8px;
+  background: rgba(6, 10, 14, 0.9);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bb-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  transition: width 0.2s linear;
+}
+
+.bb-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  text-align: right;
 }
 
 .panel {
@@ -874,12 +995,20 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .hud-hint {
-  font-size: 11px;
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  font-size: 10px;
   color: var(--muted);
   background: rgba(7, 10, 14, 0.6);
-  padding: 6px 10px;
+  padding: 4px 10px;
   border-radius: 6px;
   text-align: center;
+  white-space: nowrap;
+  max-width: calc(100vw - 40px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 kbd {
