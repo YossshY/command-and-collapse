@@ -35,6 +35,7 @@ let myId = null;
 let aiId = null;
 let isHost = false;
 let mode = 'lobby';
+let paused = false;
 let money = 0;
 let energyProd = 0;
 let energyUse = 0;
@@ -227,6 +228,15 @@ function setupInput() {
     const tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
+    if (e.code === 'Escape' && paused) { setPaused(false); return; }
+
+    if (e.code === 'KeyP' || e.code === 'Space') {
+      if (mode === 'game') { e.preventDefault(); togglePause(); }
+      return;
+    }
+
+    if (paused) return;
+
     keys.add(e.code);
     if (e.code === 'Escape') {
       if (placement) cancelPlacement();
@@ -402,7 +412,7 @@ function sellBuilding(b) {
   toast(`${b.def.name} vendu.`);
   refreshSelection();
   updateHud();
-  renderSidebar();
+  renderBuildGrid();
 }
 
 function sellSelected() {
@@ -445,7 +455,7 @@ function clearSelection() {
 
 function refreshSelection() {
   updateSelectionPanel();
-  renderCommandPanel();
+  renderBuildGrid();
 }
 
 /* ------------------------------------------------------------------ entités */
@@ -693,7 +703,7 @@ function tryPlace(cx, cy) {
   cancelPlacement();
   audio.sfx('place');
   updateHud();
-  renderSidebar();
+  renderBuildGrid();
 }
 
 function placeBuilding(owner, type, x, z) {
@@ -1083,19 +1093,45 @@ function updateVisibility() {
 /* ------------------------------------------------------------------ minimap */
 
 let mmCtx = null;
+let mmMask = null;
+let mmMaskCtx = null;
 
 function setupMinimap() {
   mmCtx = $('minimap').getContext('2d');
+  mmMask = document.createElement('canvas');
+  mmMask.width = 200;
+  mmMask.height = 200;
+  mmMaskCtx = mmMask.getContext('2d');
 }
 
 function drawMinimap() {
   if (!mmCtx) return;
-  const S = 190;
+  const S = 200;
   const k = S / MAP_SIZE;
   const px = (x) => (x + MAP_SIZE / 2) * k;
 
-  mmCtx.fillStyle = '#0d1218';
+  // Sol sable
+  mmCtx.fillStyle = '#3b3327';
   mmCtx.fillRect(0, 0, S, S);
+
+  // Quadrillage tactique
+  mmCtx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
+  mmCtx.lineWidth = 1;
+  for (let i = 1; i < 6; i++) {
+    const q = (S / 6) * i;
+    mmCtx.beginPath(); mmCtx.moveTo(q, 0); mmCtx.lineTo(q, S); mmCtx.stroke();
+    mmCtx.beginPath(); mmCtx.moveTo(0, q); mmCtx.lineTo(S, q); mmCtx.stroke();
+  }
+
+  // Zones non explorées
+  if (settings.fog && exploredCanvas && mmMaskCtx) {
+    mmMaskCtx.globalCompositeOperation = 'source-over';
+    mmMaskCtx.fillStyle = '#080b0f';
+    mmMaskCtx.fillRect(0, 0, S, S);
+    mmMaskCtx.globalCompositeOperation = 'destination-out';
+    mmMaskCtx.drawImage(exploredCanvas, 0, 0, S, S);
+    mmCtx.drawImage(mmMask, 0, 0);
+  }
 
   for (const f of fields.values()) {
     mmCtx.fillStyle = f.def.color;
@@ -1204,10 +1240,10 @@ function updateHud() {
   $('hud-money').textContent = Math.floor(money).toLocaleString('fr-FR');
   $('power-label').textContent = `${energyProd} / ${energyUse}`;
   const ratio = energyUse === 0 ? (energyProd > 0 ? 1 : 0) : Math.min(1, energyProd / energyUse);
-  $('power-fill').style.height = `${Math.max(4, ratio * 100)}%`;
+  $('power-fill').style.width = `${Math.max(3, ratio * 100)}%`;
   $('power-fill').classList.toggle('bad', lowPower);
   $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
-  refreshSidebar();
+  refreshBuildGrid();
   renderBuildBar();
 }
 
@@ -1257,9 +1293,14 @@ function singleEntityHtml(e) {
 
   return `
     <div class="sel-head">${e.def.name}</div>
-    ${hpBarHtml(ratio)}
-    <div class="sel-hp">${Math.ceil(e.hp)} / ${e.maxHp} PV</div>
-    <div class="sel-stats">${rows.map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('')}</div>`;
+    <div class="sel-body">
+      <div class="sel-portrait">${icon(e.def.shape)}</div>
+      <div class="sel-info">
+        ${hpBarHtml(ratio)}
+        <div class="sel-hp">${Math.ceil(e.hp)} / ${e.maxHp} PV</div>
+        <div class="sel-stats">${rows.map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('')}</div>
+      </div>
+    </div>`;
 }
 
 function updateSelectionPanel() {
@@ -1268,7 +1309,7 @@ function updateSelectionPanel() {
 
   const ents = [...selected].map(getEntity).filter(Boolean);
   if (!ents.length) {
-    el.innerHTML = '<span class="muted">Aucune sélection</span>';
+    el.innerHTML = '<div class="sel-empty">Aucune sélection</div>';
     return;
   }
 
@@ -1289,9 +1330,14 @@ function updateSelectionPanel() {
 
   el.innerHTML = `
     <div class="sel-head">${ents.length} unités sélectionnées</div>
-    ${hpBarHtml(ratio)}
-    <div class="sel-hp">${Math.ceil(hp)} / ${maxHp} PV</div>
-    <div class="sel-stats">${[...counts.entries()].map(([l, n]) => `<span><b>${n} ×</b> ${l}</span>`).join('')}</div>`;
+    <div class="sel-body">
+      <div class="sel-portrait">${icon(ents[0].def.shape)}</div>
+      <div class="sel-info">
+        ${hpBarHtml(ratio)}
+        <div class="sel-hp">${Math.ceil(hp)} / ${maxHp} PV</div>
+        <div class="sel-stats">${[...counts.entries()].map(([l, n]) => `<span><b>${n} ×</b> ${l}</span>`).join('')}</div>
+      </div>
+    </div>`;
 }
 
 /* ------------------------------------------- barre de chantiers (bas d'écran) */
@@ -1374,111 +1420,208 @@ function renderBuildBar() {
   }
 }
 
-function renderCommandPanel() {
-  const panel = $('cmd-panel');
-  panel.textContent = '';
-  panel.classList.add('hidden');
-  if (mode !== 'game' || !selected.size) return;
+/* --------------------------------------------------- icônes SVG (inline) */
 
-  const sel = [...selected].map(getEntity).filter(Boolean);
-  const prod = sel.find((e) => e.kind === 'building' && e.built && e.def.produces && e.def.produces.length);
-  if (prod) { renderProduceMenu(panel, prod); return; }
+const ICONS = {
+  power: '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>',
+  refinery: '<path d="M12 2s-7 8-7 13a7 7 0 0 0 14 0c0-5-7-13-7-13z"/>',
+  barracks: '<path d="M12 2 20 5v7c0 5-8 10-8 10S4 17 4 12V5z"/>',
+  factory: '<path d="M3 21V9l5 3V9l5 3V5h5v16z"/>',
+  airfield: '<path d="M2 13 22 4l-7 9 7 7z"/>',
+  research: '<path d="M9 2h6v6l4 10a2 2 0 0 1-2 3H7a2 2 0 0 1-2-3l4-10z"/>',
+  turret: '<circle cx="12" cy="12" r="3"/><rect x="11" y="2" width="2" height="5"/><rect x="11" y="17" width="2" height="5"/><rect x="2" y="11" width="5" height="2"/><rect x="17" y="11" width="5" height="2"/>',
+  patriot: '<path d="M12 2l4 9v5l-4 6-4-6v-5z"/>',
+  collector: '<path d="M3 8h11l4 4v5H3z"/><circle cx="7" cy="19" r="2"/><circle cx="15" cy="19" r="2"/>',
+  infantry: '<circle cx="12" cy="5" r="3"/><path d="M6 22v-6l6-3 6 3v6"/>',
+  'infantry-at': '<circle cx="12" cy="5" r="3"/><path d="M6 22v-6l6-3 6 3v6"/><rect x="16" y="6" width="6" height="2" rx="1"/>',
+  tank: '<rect x="3" y="10" width="14" height="7" rx="1"/><rect x="17" y="12" width="5" height="3"/><circle cx="7" cy="19" r="2"/><circle cx="14" cy="19" r="2"/>',
+  'tank-heavy': '<rect x="2" y="9" width="16" height="8" rx="1"/><rect x="18" y="11" width="4" height="4"/><circle cx="6" cy="19" r="2"/><circle cx="14" cy="19" r="2"/>',
+  buggy: '<path d="M3 14h12l3-4h3v7H3z"/><circle cx="7" cy="18" r="2"/><circle cx="16" cy="18" r="2"/>',
+  artillery: '<path d="M3 18h12v3H3z"/><path d="M6 18l8-12 3 2-8 10z"/>',
+  aircraft: '<path d="M12 2l3 8h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/>',
+  'truck-bomb': '<path d="M3 8h10v8H3z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="16" cy="18" r="2"/>',
+  structures: '<path d="M3 21V8l6-4 6 4v13z"/><path d="M15 21V11l6 3v7z"/>',
+  defense: '<path d="M12 2 20 5v7c0 5-8 10-8 10S4 17 4 12V5z"/><rect x="11" y="8" width="2" height="7"/>',
+  cc: '<path d="M3 21V9l9-6 9 6v12z"/><rect x="10" y="13" width="4" height="8"/>'
+};
 
-  // Le panneau central ne sert que s'il y a une action possible
-  const b = sel.find((e) => e.kind === 'building');
-  if (b && sel.length === 1 && b.type !== 'cc') { renderBuildingInfo(panel, b); return; }
+function icon(name) {
+  const path = ICONS[name] || ICONS.structures;
+  return `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${path}</svg>`;
 }
 
-function renderBuildingInfo(panel, b) {
-  panel.classList.remove('hidden');
-  const title = document.createElement('div');
-  title.className = 'cmd-title';
-  title.textContent = b.def.name;
-  panel.appendChild(title);
+/* ------------------------------------- grille de construction (façon Generals) */
 
-  const info = document.createElement('div');
-  info.className = 'cmd-desc';
-  const bits = [`${Math.round(b.hp)} / ${b.maxHp} PV`];
-  if (b.def.energy) bits.push(`${b.def.energy > 0 ? '+' : ''}${b.def.energy} ⚡`);
-  if (!b.built) bits.push(`chantier ${Math.round(b.progress * 100)} %`);
-  if (b.rally) bits.push('point de ralliement défini');
-  info.textContent = bits.join(' · ');
-  panel.appendChild(info);
+let gridMode = 'build';   // 'build' | 'produce'
+let gridCat = 'structures';
+let gridRefs = [];
 
-  if (b.type !== 'cc') {
-    const actions = document.createElement('div');
-    actions.className = 'cmd-actions';
-    const sell = document.createElement('button');
-    sell.className = 'cmd-btn';
-    sell.innerHTML = `<span class="cmd-name">Vendre</span><span class="cmd-cost">+$${Math.round(b.def.cost * 0.5).toLocaleString('fr-FR')}</span>`;
-    sell.addEventListener('click', () => sellBuilding(b));
-    actions.appendChild(sell);
-    panel.appendChild(actions);
+function makeCell({ iconName, cost, title, onClick }) {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'build-cell';
+  el.title = title;
+  el.innerHTML = `
+    <span class="bc-icon">${icon(iconName)}</span>
+    <span class="bc-cost">$${cost.toLocaleString('fr-FR')}</span>
+    <span class="bc-fill" style="height:0"></span>
+    <span class="bc-pct"></span>
+    <span class="bc-queue"></span>`;
+  el.addEventListener('click', onClick);
+  return {
+    el,
+    fill: el.querySelector('.bc-fill'),
+    pct: el.querySelector('.bc-pct'),
+    queue: el.querySelector('.bc-queue')
+  };
+}
+
+function renderTabs() {
+  const el = $('build-tabs');
+  if (!el) return;
+  el.textContent = '';
+
+  if (gridMode === 'produce') {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'tab active';
+    back.innerHTML = `${icon('structures')}<span>Construction</span>`;
+    back.addEventListener('click', () => { gridMode = 'build'; renderBuildGrid(); });
+    el.appendChild(back);
+    return;
+  }
+
+  const cats = [
+    ['structures', 'Bâtiments', 'structures'],
+    ['defense', 'Défense', 'defense']
+  ];
+
+  for (const [cat, label, ic] of cats) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tab' + (gridCat === cat ? ' active' : '');
+    b.innerHTML = `${icon(ic)}<span>${label}</span>`;
+    b.addEventListener('click', () => { gridCat = cat; renderBuildGrid(); });
+    el.appendChild(b);
   }
 }
 
-/* ------------------------------------------------------- panneau de construction */
-
-let sidebarButtons = new Map();
-
-function renderSidebar() {
-  const list = $('build-list');
-  if (!list) return;
-  list.textContent = '';
-  sidebarButtons = new Map();
+function renderBuildGrid() {
+  const grid = $('build-grid');
+  if (!grid) return;
+  grid.textContent = '';
+  gridRefs = [];
   if (mode !== 'game') return;
 
+  // Un bâtiment de production sélectionné prend la main sur la grille
+  const sel = [...selected].map(getEntity).filter(Boolean);
+  const prod = sel.length === 1 && sel[0].kind === 'building' && sel[0].built &&
+    sel[0].def.produces && sel[0].def.produces.length ? sel[0] : null;
+
+  if (prod) {
+    gridMode = 'produce';
+    renderTabs();
+
+    for (const type of prod.def.produces) {
+      const def = unitDef(prod.faction, type);
+      if (!def) continue;
+      const cell = makeCell({
+        iconName: def.shape,
+        cost: def.cost,
+        title: `${def.name} — ${def.cost} $ · ${def.time}s${def.role ? ` · ${def.role}` : ''}`,
+        onClick: () => { queueUnit(prod, type); renderBuildGrid(); }
+      });
+      grid.appendChild(cell.el);
+      gridRefs.push({ ...cell, kind: 'unit', def, building: prod, type });
+    }
+    refreshBuildGrid();
+    return;
+  }
+
+  gridMode = 'build';
+  renderTabs();
+
   for (const def of buildableList(profile.faction)) {
-    const btn = document.createElement('button');
-    btn.className = 'build-btn';
-    btn.innerHTML = `
-      <span class="b-name">${def.name}</span>
-      <span class="b-cost">$${def.cost.toLocaleString('fr-FR')}</span>
-      <span class="b-meta">${def.time}s${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''} · ${def.desc || ''}</span>`;
-    btn.addEventListener('click', () => { audio.sfx('click'); startPlacement(def.id); });
-    list.appendChild(btn);
-    sidebarButtons.set(def.id, { btn, def });
+    const cat = def.defense ? 'defense' : 'structures';
+    if (cat !== gridCat) continue;
+
+    const cell = makeCell({
+      iconName: def.shape,
+      cost: def.cost,
+      title: `${def.name} — ${def.cost} $ · ${def.time}s${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''}${def.desc ? ` · ${def.desc}` : ''}`,
+      onClick: () => { audio.sfx('click'); startPlacement(def.id); }
+    });
+    grid.appendChild(cell.el);
+    gridRefs.push({ ...cell, kind: 'building', def, type: def.id });
   }
-  refreshSidebar();
+  refreshBuildGrid();
 }
 
-function refreshSidebar() {
-  for (const { btn, def } of sidebarButtons.values()) {
-    btn.disabled = money < def.cost;
+function refreshBuildGrid() {
+  for (const r of gridRefs) {
+    if (r.kind === 'building') {
+      r.el.disabled = money < r.def.cost;
+
+      let site = null;
+      for (const b of buildings.values()) {
+        if (b.owner === myId && b.type === r.type && !b.built) { site = b; break; }
+      }
+      if (site) {
+        const p = Math.round(site.progress * 100);
+        r.fill.style.height = `${p}%`;
+        r.pct.textContent = `${p}%`;
+      } else {
+        r.fill.style.height = '0';
+        r.pct.textContent = '';
+      }
+    } else {
+      const q = r.building.queue;
+      r.el.disabled = money < r.def.cost || q.length >= 5;
+
+      const job = q.find((j) => j.type === r.type);
+      if (job) {
+        const p = Math.round(job.progress * 100);
+        r.fill.style.height = `${p}%`;
+        r.pct.textContent = `${p}%`;
+      } else {
+        r.fill.style.height = '0';
+        r.pct.textContent = '';
+      }
+
+      const n = q.filter((j) => j.type === r.type).length;
+      r.queue.textContent = n > 1 ? `×${n}` : '';
+    }
   }
 }
 
-function renderProduceMenu(panel, b) {
-  panel.classList.remove('hidden');
-  const title = document.createElement('div');
-  title.className = 'cmd-title';
-  title.textContent = b.def.name;
+/* -------------------------------------------------------------------- pause */
 
-  if (b.queue.length) {
-    const q = document.createElement('span');
-    q.className = 'cmd-queue';
-    q.textContent = `file : ${b.queue.map((j) => unitDef(b.faction, j.type).name).join(', ')}`;
-    title.appendChild(q);
+function canPause() {
+  return mode === 'game' && settings.ai !== 'none' && net.gamePeerCount() === 0;
+}
+
+function setPaused(v) {
+  if (mode !== 'game') return;
+  if (v && !canPause()) {
+    toast("Pause disponible uniquement en escarmouche contre l'IA.");
+    return;
   }
-  panel.appendChild(title);
+  paused = v;
+  if (paused) keys.clear();
+  $('pause-overlay').classList.toggle('hidden', !paused);
+  $('btn-pause').classList.toggle('active', paused);
+  if (paused) audio.sfx('click');
+}
 
-  const grid = document.createElement('div');
-  grid.className = 'cmd-grid';
+function togglePause() { setPaused(!paused); }
 
-  for (const type of b.def.produces) {
-    const def = unitDef(b.faction, type);
-    if (!def) continue;
-    const btn = document.createElement('button');
-    btn.className = 'cmd-btn';
-    btn.disabled = money < def.cost;
-    btn.innerHTML = `
-      <span class="cmd-name">${def.name}</span>
-      <span class="cmd-cost">$${def.cost.toLocaleString('fr-FR')} · ${def.time}s</span>
-      <span class="cmd-desc">${def.role || ''}</span>`;
-    btn.addEventListener('click', () => { queueUnit(b, type); renderCommandPanel(); });
-    grid.appendChild(btn);
-  }
-  panel.appendChild(grid);
+function bindHud() {
+  $('btn-pause').addEventListener('click', togglePause);
+  $('btn-resume').addEventListener('click', () => setPaused(false));
+  $('btn-pause-settings').addEventListener('click', () => $('settings-modal').classList.remove('hidden'));
+  $('btn-pause-quit').addEventListener('click', () => { setPaused(false); backToLobby(); });
+  $('btn-help').addEventListener('click', () => $('help-modal').classList.remove('hidden'));
+  $('btn-close-help').addEventListener('click', () => $('help-modal').classList.add('hidden'));
 }
 
 let toastTimer = null;
@@ -1897,7 +2040,7 @@ function beginMatch(roster, cfg) {
   revealStartArea();
   net.enterGame(net.myRoom ? net.myRoom.code : 'solo');
   recomputeEnergy();
-  renderSidebar();
+  renderBuildGrid();
   updateHud();
   refreshSelection();
   toast(`Partie lancée — ${settings.money.toLocaleString('fr-FR')} $ de départ.`);
@@ -1927,10 +2070,12 @@ function backToLobby() {
   for (const m of markers) scene.remove(m);
   markers.length = 0;
 
+  paused = false;
+  $('pause-overlay').classList.add('hidden');
   $('hud').classList.add('hidden');
   $('waiting').classList.add('hidden');
   $('lobby').classList.remove('hidden');
-  renderSidebar();
+  renderBuildGrid();
   refreshSelection();
 }
 
@@ -2212,28 +2357,31 @@ function animate() {
   updateCamera(dt);
 
   if (mode === 'game') {
-    updateBuildings(dt);
-    updateUnits(dt);
-    updateFields(dt);
-    updateMarkers(dt);
-    updateTracers(dt);
-    updateAI(dt);
+    if (!paused) {
+      updateBuildings(dt);
+      updateUnits(dt);
+      updateFields(dt);
+      updateMarkers(dt);
+      updateTracers(dt);
+      updateAI(dt);
+
+      syncAcc += dt;
+      if (syncAcc >= 0.1) { syncAcc = 0; broadcastState(); }
+
+      fogAcc += dt;
+      if (fogAcc >= 0.2) { fogAcc = 0; updateFog(); updateVisibility(); }
+
+      mmAcc += dt;
+      if (mmAcc >= 0.15) { mmAcc = 0; drawMinimap(); }
+
+      hudAcc += dt;
+      if (hudAcc >= 0.25) { hudAcc = 0; updateHud(); }
+
+      sweepAcc += dt;
+      if (sweepAcc >= 1) { sweepAcc = 0; sweepRemote(); }
+    }
+
     updateBars();
-
-    syncAcc += dt;
-    if (syncAcc >= 0.1) { syncAcc = 0; broadcastState(); }
-
-    fogAcc += dt;
-    if (fogAcc >= 0.2) { fogAcc = 0; updateFog(); updateVisibility(); }
-
-    mmAcc += dt;
-    if (mmAcc >= 0.15) { mmAcc = 0; drawMinimap(); }
-
-    hudAcc += dt;
-    if (hudAcc >= 0.25) { hudAcc = 0; updateHud(); }
-
-    sweepAcc += dt;
-    if (sweepAcc >= 1) { sweepAcc = 0; sweepRemote(); }
   }
 
   renderer.render(scene, camera);
@@ -2247,6 +2395,7 @@ async function boot() {
   setupMinimap();
   setupInput();
   bindLobby();
+  bindHud();
   setupAudioUI();
 
   net.on('rooms', renderRooms);

@@ -22,7 +22,9 @@
 
 <!-- ============================== HUD DE PARTIE ============================== -->
 <div id="hud" class="hidden">
-  <div class="hud-top">
+
+  <!-- Bandeau joueur (haut gauche) -->
+  <div class="hud-top-left">
     <div class="badge">
       <span class="dot" id="hud-dot"></span>
       <div class="badge-text">
@@ -30,56 +32,64 @@
         <small id="hud-faction">—</small>
       </div>
     </div>
+    <span id="hud-peers" class="peers">0 allié</span>
+  </div>
 
-    <div class="hud-res">
+  <!-- Colonne droite façon Generals : minimap, ressources, construction, sélection -->
+  <div class="right-col">
+
+    <div class="minimap-frame">
+      <canvas id="minimap" width="200" height="200"></canvas>
+    </div>
+
+    <div class="res-row">
       <div class="money">
         <span class="money-sign">$</span>
         <strong id="hud-money">0</strong>
       </div>
-      <span id="hud-peers" class="peers">0 allié</span>
-      <button id="btn-settings-hud" class="icon-btn" title="Réglages audio">⚙</button>
+      <div class="power-mini" id="power-mini" title="Énergie produite / consommée">
+        <span class="power-bolt">⚡</span>
+        <span id="power-label">0 / 0</span>
+        <div class="power-mini-track"><i id="power-fill"></i></div>
+      </div>
+    </div>
+
+    <div class="build-tabs" id="build-tabs"></div>
+    <div class="build-grid" id="build-grid"></div>
+
+    <div id="hud-selection" class="sel-panel">
+      <div class="sel-empty">Aucune sélection</div>
     </div>
   </div>
 
-  <!-- Panneau de construction latéral (façon Generals) -->
-  <div class="sidebar" id="sidebar">
-    <div class="sidebar-head">Construction</div>
-    <div class="sidebar-list" id="build-list"></div>
+  <!-- Barre de commandement (bas gauche) -->
+  <div class="cmd-bar">
+    <button id="btn-pause" class="cmd-sq" type="button" title="Pause (P)">⏸</button>
+    <button id="btn-settings-hud" class="cmd-sq" type="button" title="Réglages audio">⚙</button>
+    <button id="btn-help" class="cmd-sq" type="button" title="Aide / raccourcis">?</button>
   </div>
 
-  <!-- Jauge d'énergie verticale -->
-  <div class="power-gauge" id="power-gauge">
-    <div class="power-track">
-      <div class="power-fill" id="power-fill"></div>
-    </div>
-    <span class="power-label" id="power-label">0 / 0</span>
-    <span class="power-caption">⚡</span>
-  </div>
+  <!-- Bandeau chantiers + productions (bas centre) -->
+  <div id="build-bar" class="build-bar hidden"></div>
 
   <div id="low-power" class="alert hidden">⚡ Basse tension — production ralentie</div>
 
-  <!-- Minimap -->
-  <div class="minimap-wrap">
-    <canvas id="minimap" width="190" height="190"></canvas>
-  </div>
-
-  <!-- Panneau de production contextuel -->
-  <div id="cmd-panel" class="cmd-panel hidden"></div>
-
-  <div class="hud-bottom">
-    <div id="hud-selection" class="panel sel-panel">Aucune sélection</div>
-    <div id="build-bar" class="build-bar hidden"></div>
-  </div>
-
-  <div class="hud-hint">
-    <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> multiple ·
-    <kbd>Clic droit</kbd> déplacement / ralliement ·
-    <kbd>ZQSD</kbd> caméra · <kbd>Molette</kbd> zoom ·
-    <kbd>Ctrl+1-9</kbd> groupes · <kbd>Suppr</kbd> vendre · <kbd>Échap</kbd> annuler
-  </div>
-
   <div id="select-box" class="hidden"></div>
   <div id="toasts"></div>
+</div>
+
+<!-- ================================ PAUSE ================================== -->
+<div id="pause-overlay" class="pause-overlay hidden">
+  <div class="pause-card">
+    <h2>Pause</h2>
+    <p class="muted">La partie est suspendue.</p>
+    <div class="pause-actions">
+      <button id="btn-resume" class="btn primary" type="button">Reprendre</button>
+      <button id="btn-pause-settings" class="btn" type="button">Réglages audio</button>
+      <button id="btn-pause-quit" class="btn" type="button">Quitter la partie</button>
+    </div>
+    <p class="muted small">Pause disponible uniquement en escarmouche contre l'IA.</p>
+  </div>
 </div>
 
 <!-- ================================= LOBBY ================================== -->
@@ -226,6 +236,27 @@
 
     <div class="row">
       <button id="btn-close-settings" class="btn primary" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================= AIDE ================================== -->
+<div id="help-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Raccourcis</h2>
+    <ul class="help-list">
+      <li><kbd>Clic gauche</kbd> sélectionner une unité / un bâtiment</li>
+      <li><kbd>Rectangle</kbd> sélection multiple</li>
+      <li><kbd>Clic droit</kbd> déplacer · point de ralliement sur un bâtiment</li>
+      <li><kbd>ZQSD</kbd> / <kbd>Flèches</kbd> déplacer la caméra</li>
+      <li><kbd>Molette</kbd> zoomer</li>
+      <li><kbd>Ctrl+1-9</kbd> mémoriser un groupe · <kbd>1-9</kbd> le rappeler</li>
+      <li><kbd>Suppr</kbd> vendre le bâtiment sélectionné</li>
+      <li><kbd>P</kbd> / <kbd>Espace</kbd> pause (escarmouche IA)</li>
+      <li><kbd>Échap</kbd> annuler le placement / désélectionner</li>
+    </ul>
+    <div class="row">
+      <button id="btn-close-help" class="btn primary" type="button">Fermer</button>
     </div>
   </div>
 </div>

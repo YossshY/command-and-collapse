@@ -81,14 +81,20 @@ La Légion de l'Ombre n'utilise pas d'énergie : tous ses bâtiments sont à 0.
 
 ## 3. Construction
 
-Le **panneau latéral droit** liste en permanence tous les bâtiments de la faction
-avec leur coût, leur temps et leur énergie — comme la barre latérale de Generals.
+La **grille de construction** occupe la colonne de droite, sous la minimap,
+comme dans Generals : des cases carrées avec icône et coût, réparties en deux
+onglets (**Bâtiments** / **Défense**).
 
-1. Cliquer sur un bâtiment → **aperçu fantôme 3D** qui suit la souris
+1. Cliquer sur une case → **aperçu fantôme 3D** qui suit la souris
    (vert = valide, rouge = bloqué par un bâtiment, un champ de cristaux ou le bord).
 2. Clic gauche → l'argent est débité et le chantier est posé.
 3. Le bâtiment monte de 0 % à 100 % **tout seul** (échafaudage visible), à la
    vitesse `time` de `config.js`, divisée par deux en basse tension.
+   La case affiche alors un remplissage bleu et son pourcentage.
+
+**Sélectionner un bâtiment de production** (caserne, usine, aérodrome, dépôt)
+bascule la même grille sur ses unités — exactement le comportement de Generals.
+L'onglet devient « Construction » pour revenir en arrière.
 
 `Échap` ou clic droit annule l'aperçu.
 
@@ -288,6 +294,35 @@ pourcentage, pour ne jamais perdre le fil quand la caméra est ailleurs.
 caractéristiques de l'entité — dégâts, portée, vitesse, rôle, état courant,
 cargaison pour les collecteurs, énergie et file de production pour les
 bâtiments. Sur une sélection multiple : total des PV et répartition par type.
+
+## 12. Interface façon Generals
+
+Le HUD reprend la disposition de *Heure H* :
+
+| Zone | Contenu |
+|---|---|
+| Haut gauche | pseudo, faction, pastille de couleur, nombre d'alliés |
+| Haut droite | **minimap** encadrée (terrain sable, brouillard, champs, entités, cadre de caméra) |
+| Sous la minimap | **argent** et **jauge d'énergie** horizontale |
+| Colonne droite | onglets + **grille de construction** (cases carrées, icônes SVG, coût) |
+| Bas droite | **panneau de sélection** : en-tête vert, portrait, barre de vie, caractéristiques |
+| Bas gauche | **barre de commandement** : pause, réglages audio, aide |
+| Bas centre | **bandeau chantiers / productions** avec pourcentages |
+
+Les icônes sont des SVG inline (`ICONS` dans `game.js`) : aucun fichier image,
+donc rien à héberger et un rendu net à toutes les tailles.
+
+## 13. Pause
+
+Bouton ⏸ de la barre de commandement, ou <kbd>P</kbd> / <kbd>Espace</kbd>.
+
+La pause **gèle entièrement la simulation** : unités, chantiers, production,
+récolte, IA, brouillard et synchronisation réseau. La caméra reste libre pour
+inspecter la carte. <kbd>Échap</kbd> ou « Reprendre » relance.
+
+Elle n'est proposée qu'en **escarmouche contre l'IA** (`settings.ai !== 'none'`
+et aucun autre joueur humain connecté) : en P2P, mettre en pause pour soi
+désynchroniserait les autres clients.
 
 ## Débogage
 
