@@ -30,19 +30,41 @@
         <small id="hud-faction">—</small>
       </div>
     </div>
-    <div class="hud-stats">
-      <span id="hud-units">0 unité</span>
-      <span id="hud-peers">0 allié</span>
-      <span id="hud-net" class="net">connexion…</span>
+
+    <div class="hud-res">
+      <div class="money">
+        <span class="money-sign">$</span>
+        <strong id="hud-money">0</strong>
+      </div>
+      <span id="hud-peers" class="peers">0 allié</span>
     </div>
   </div>
 
+  <!-- Jauge d'énergie verticale -->
+  <div class="power-gauge" id="power-gauge">
+    <div class="power-track">
+      <div class="power-fill" id="power-fill"></div>
+    </div>
+    <span class="power-label" id="power-label">0 / 0</span>
+    <span class="power-caption">⚡</span>
+  </div>
+
+  <div id="low-power" class="alert hidden">⚡ Basse tension — production ralentie</div>
+
+  <!-- Minimap -->
+  <div class="minimap-wrap">
+    <canvas id="minimap" width="190" height="190"></canvas>
+  </div>
+
+  <!-- Panneau de commandes contextuel -->
+  <div id="cmd-panel" class="cmd-panel hidden"></div>
+
   <div class="hud-bottom">
-    <div id="hud-selection" class="panel">Aucune unité sélectionnée</div>
+    <div id="hud-selection" class="panel">Aucune sélection</div>
     <div class="hud-hint">
-      <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> sélection multiple ·
-      <kbd>Clic droit</kbd> déplacement · <kbd>ZQSD</kbd>/<kbd>Flèches</kbd> caméra ·
-      <kbd>Molette</kbd> zoom · <kbd>B</kbd> bulldozer
+      <kbd>Clic gauche</kbd> sélection · <kbd>Rectangle</kbd> multiple ·
+      <kbd>Clic droit</kbd> déplacement · <kbd>ZQSD</kbd> caméra ·
+      <kbd>Molette</kbd> zoom · <kbd>Échap</kbd> annuler
     </div>
   </div>
 
@@ -69,17 +91,17 @@
       <div class="field">
         <span>Faction</span>
         <div class="factions" id="factions">
-          <button class="faction" data-faction="usa" type="button">
-            <strong>USA</strong>
-            <small>Blindés lourds · soutien aérien</small>
+          <button class="faction" data-faction="atlantic" type="button">
+            <strong>Alliance Atlantique</strong>
+            <small>Haute technologie · boucliers · aviation</small>
           </button>
-          <button class="faction" data-faction="china" type="button">
-            <strong>Chine</strong>
-            <small>Nombre · artillerie · blindage</small>
+          <button class="faction" data-faction="eurasia" type="button">
+            <strong>Pacte Eurasiatique</strong>
+            <small>Blindage lourd · masse · guerre électronique</small>
           </button>
-          <button class="faction" data-faction="gla" type="button">
-            <strong>GLA</strong>
-            <small>Vitesse · embuscades · guérilla</small>
+          <button class="faction" data-faction="shadow" type="button">
+            <strong>Légion de l'Ombre</strong>
+            <small>Guérilla · pas d'électricité · rapidité</small>
           </button>
         </div>
       </div>
@@ -128,6 +150,37 @@
     <h2>Salon <span id="wait-code" class="code">—</span></h2>
     <p id="wait-sub" class="muted"></p>
     <ul id="wait-players" class="players"></ul>
+
+    <div id="settings-panel" class="settings hidden">
+      <h3>Paramètres de partie</h3>
+      <div class="settings-grid">
+        <label class="set">
+          <span>Argent de départ</span>
+          <select id="set-money">
+            <option value="3000">3 000 $</option>
+            <option value="5000" selected>5 000 $</option>
+            <option value="10000">10 000 $</option>
+            <option value="20000">20 000 $</option>
+          </select>
+        </label>
+
+        <label class="set">
+          <span>Adversaire IA</span>
+          <select id="set-ai">
+            <option value="none">Aucun (multijoueur)</option>
+            <option value="easy">Recrue</option>
+            <option value="normal" selected>Vétéran</option>
+            <option value="hard">Général</option>
+          </select>
+        </label>
+
+        <label class="set check">
+          <input type="checkbox" id="set-fog" checked />
+          <span>Brouillard de guerre</span>
+        </label>
+      </div>
+    </div>
+
     <div class="row">
       <button id="btn-start" class="btn primary" type="button">Lancer la partie</button>
       <button id="btn-leave" class="btn" type="button">Quitter</button>

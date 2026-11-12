@@ -41,6 +41,8 @@ html, body {
   touch-action: none;
 }
 
+#hud.placing #scene { cursor: crosshair; }
+
 .hidden { display: none !important; }
 
 /* ------------------------------------------------------------------- écrans */
@@ -106,7 +108,7 @@ html, body {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
-.card.wide { width: min(560px, 100%); }
+.card.wide { width: min(600px, 100%); }
 
 .card h2 {
   margin: 0 0 12px;
@@ -199,7 +201,7 @@ input:focus, select:focus {
   transition: all 0.15s;
 }
 
-.faction strong { font-size: 13px; letter-spacing: 0.08em; }
+.faction strong { font-size: 13px; letter-spacing: 0.04em; }
 .faction small { color: var(--muted); font-size: 11px; }
 
 .faction:hover { background: rgba(56, 189, 248, 0.07); }
@@ -380,6 +382,48 @@ input:focus, select:focus {
   box-shadow: 0 0 10px currentColor;
 }
 
+/* ------------------------------------------------------- paramètres de partie */
+
+.settings {
+  margin: 14px 0 4px;
+  padding: 12px;
+  background: rgba(6, 10, 14, 0.6);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.settings h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.set { display: flex; flex-direction: column; gap: 5px; }
+.set > span {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.set.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.set.check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.set.check span { font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--text); }
+
 /* ---------------------------------------------------------------------- HUD */
 
 #hud {
@@ -419,34 +463,221 @@ input:focus, select:focus {
   text-transform: uppercase;
 }
 
-.hud-stats {
+.hud-res {
   display: flex;
+  align-items: center;
   gap: 8px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
-.hud-stats span {
+.money {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.money-sign { color: var(--accent-2); font-size: 14px; font-weight: 700; }
+.money strong {
+  font-family: var(--mono);
+  font-size: 20px;
+  color: var(--accent-2);
+  letter-spacing: 0.02em;
+}
+
+.peers {
   padding: 8px 12px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
   backdrop-filter: blur(6px);
 }
 
-.hud-stats .net.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
+/* ------------------------------------------------------------ jauge d'énergie */
+
+.power-gauge {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.power-track {
+  width: 12px;
+  height: 150px;
+  background: rgba(6, 10, 14, 0.9);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.power-fill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #38bdf8, #0ea5e9);
+  transition: height 0.3s, background 0.3s;
+}
+
+.power-fill.bad { background: linear-gradient(180deg, #f87171, #dc2626); }
+
+.power-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  writing-mode: horizontal-tb;
+}
+
+.power-caption { font-size: 12px; color: var(--accent); }
+
+/* ------------------------------------------------------------------- alerte */
+
+.alert {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  background: rgba(120, 20, 20, 0.92);
+  border: 1px solid rgba(248, 113, 113, 0.7);
+  border-radius: 999px;
+  color: #fecaca;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ------------------------------------------------------------------ minimap */
+
+.minimap-wrap {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+#minimap {
+  display: block;
+  width: 190px;
+  height: 190px;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+/* ------------------------------------------------------- panneau de commandes */
+
+.cmd-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  width: min(720px, calc(100vw - 460px));
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.cmd-title {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-queue {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--muted);
+}
+
+.cmd-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.cmd-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 9px;
+  background: rgba(6, 10, 14, 0.8);
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s;
+  font-family: var(--font);
+}
+
+.cmd-btn:hover:not(:disabled) {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.cmd-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.cmd-name { font-size: 12px; font-weight: 600; }
+.cmd-cost { font-family: var(--mono); font-size: 10px; color: var(--accent-2); }
+.cmd-desc {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------ bas HUD */
 
 .hud-bottom {
   position: absolute;
-  left: 14px;
+  left: 220px;
   right: 14px;
   bottom: 14px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
-  align-items: flex-start;
 }
 
 .panel {
@@ -493,7 +724,7 @@ kbd {
 #toasts {
   position: fixed;
   left: 50%;
-  bottom: 96px;
+  bottom: 200px;
   transform: translate(-50%, 12px);
   padding: 10px 18px;
   background: rgba(14, 20, 27, 0.96);

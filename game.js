@@ -1,11 +1,16 @@
 /* ============================================================================
- * game.js — Boucle de jeu, caméra stratégique, sélection, ordres, rendu 3D
+ * game.js — Boucle de jeu, économie, construction, récolte, combat, IA
  * ========================================================================== */
 
 import * as THREE from 'three';
 import {
-  MAP_SIZE, FACTIONS, TEAM_COLORS, UNIT_SPECS,
-  createUnit, createGroundTexture, createMoveMarker, createSelectionRing
+  MAP_SIZE, SPAWNS, CRYSTAL_FIELDS, HARVEST_LOAD, HARVEST_TIME, CRYSTAL_REGROW_MS,
+  START_MONEY_OPTIONS, DIFFICULTY, FACTIONS, FACTION_ORDER, TEAM_COLORS,
+  factionOf, buildingDef, unitDef, buildableList
+} from './config.js';
+import {
+  createBuilding, createUnit, createCrystalField, createGroundTexture, createRock,
+  createMoveMarker, createSelectionRing, createGhost, createScaffold, createHealthBar
 } from './assets.js';
 import { Network } from './network.js';
 
@@ -15,43 +20,49 @@ const $ = (id) => document.getElementById(id);
 
 const net = new Network();
 
-const units = new Map();          // id -> unité
-const selected = new Set();       // ids sélectionnés
-const markers = [];               // marqueurs d'ordre actifs
-let players = [];                 // roster de la partie
+const units = new Map();       // id -> unité
+const buildings = new Map();   // id -> bâtiment
+const fields = new Map();      // id -> champ de cristaux
+const selected = new Set();
+const markers = [];
+const tracers = [];
+
+let players = [];
 let myId = null;
-let mode = 'lobby';               // 'lobby' | 'game'
-let syncAcc = 0;
-let hudAcc = 0;
+let aiId = null;
+let isHost = false;
+let mode = 'lobby';
+let money = 0;
+let energyProd = 0;
+let energyUse = 0;
+let lowPower = false;
+let entitySeq = 0;
+
+let settings = { money: 5000, fog: true, ai: 'none' };
 
 const profile = {
   name: localStorage.getItem('cac.name') || '',
-  faction: localStorage.getItem('cac.faction') || 'usa',
-  color: localStorage.getItem('cac.color') || FACTIONS.usa.color,
+  faction: localStorage.getItem('cac.faction') || 'atlantic',
+  color: localStorage.getItem('cac.color') || FACTIONS.atlantic.color,
   colorTouched: localStorage.getItem('cac.colorTouched') === '1'
 };
-
-const SPAWNS = [
-  { x: -32, z: -32 },
-  { x:  32, z:  32 },
-  { x:  32, z: -32 },
-  { x: -32, z:  32 }
-];
 
 /* ------------------------------------------------------------------- three */
 
 let scene, camera, renderer, raycaster, clock;
+const decorRocks = [];
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const cam = {
   focus: new THREE.Vector3(0, 0, 0),
   dist: 48,
   targetDist: 48,
-  pitch: THREE.MathUtils.degToRad(60)   // 60° : vue stratégique façon Generals
+  pitch: THREE.MathUtils.degToRad(60)
 };
 
 const keys = new Set();
 const pointer = { x: 0, y: 0, inside: false };
 const drag = { active: false, startX: 0, startY: 0, moved: false };
+let placement = null;   // { type, def, ghost, valid }
 
 function setupThree() {
   const canvas = $('scene');
@@ -66,13 +77,12 @@ function setupThree() {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0a0e13);
-  scene.fog = new THREE.Fog(0x0a0e13, 140, 280);
+  scene.fog = new THREE.Fog(0x0a0e13, 150, 300);
   scene.environment = makeEnvironment(renderer);
   scene.environmentIntensity = 0.55;
 
   camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 600);
 
-  // Éclairage
   scene.add(new THREE.HemisphereLight(0x9fc4e8, 0x2a3038, 1.15));
 
   const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
@@ -90,7 +100,6 @@ function setupThree() {
   scene.add(sun);
   scene.add(sun.target);
 
-  // Terrain
   const groundMat = new THREE.MeshStandardMaterial({
     map: createGroundTexture(),
     roughness: 0.95,
@@ -101,7 +110,6 @@ function setupThree() {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Liseré de bord de carte
   const edge = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(MAP_SIZE, 0.2, MAP_SIZE)),
     new THREE.LineBasicMaterial({ color: 0x2f6f8f, transparent: true, opacity: 0.55 })
@@ -109,16 +117,26 @@ function setupThree() {
   edge.position.y = 0.1;
   scene.add(edge);
 
+  // Rochers décoratifs (hors zones de base et de cristaux)
+  for (let i = 0; i < 46; i++) {
+    const x = (Math.random() - 0.5) * (MAP_SIZE - 8);
+    const z = (Math.random() - 0.5) * (MAP_SIZE - 8);
+    if (SPAWNS.some((s) => Math.hypot(s.x - x, s.z - z) < 16)) continue;
+    if (CRYSTAL_FIELDS.some((f) => Math.hypot(f.x - x, f.z - z) < f.radius + 5)) continue;
+    if (Math.hypot(x, z) < 12) continue;
+    const rock = createRock();
+    rock.position.set(x, 0, z);
+    rock.rotation.y = Math.random() * Math.PI;
+    scene.add(rock);
+    decorRocks.push(rock);
+  }
+
   raycaster = new THREE.Raycaster();
   clock = new THREE.Clock();
 
   window.addEventListener('resize', onResize);
 }
 
-/**
- * Environnement PBR minimal (dégradé ciel/sol) : sans lui, les matériaux
- * métalliques rendent noirs. Généré à la volée, aucun asset externe.
- */
 function makeEnvironment(rendererRef) {
   const canvas = document.createElement('canvas');
   canvas.width = 64;
@@ -169,7 +187,6 @@ function updateCamera(dt) {
   if (keys.has('KeyA') || keys.has('KeyQ') || keys.has('ArrowLeft'))  mx -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight'))                     mx += 1;
 
-  // Défilement par les bords de l'écran
   if (pointer.inside) {
     const m = 24;
     if (pointer.x < m) mx -= 1;
@@ -208,8 +225,10 @@ function setupInput() {
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
     keys.add(e.code);
-    if (e.code === 'Escape') clearSelection();
-    if (e.code === 'KeyB' && mode === 'game') spawnDozer();
+    if (e.code === 'Escape') {
+      if (placement) cancelPlacement();
+      else clearSelection();
+    }
   });
 
   window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -220,13 +239,19 @@ function setupInput() {
     pointer.y = e.clientY;
     pointer.inside = true;
     if (drag.active) updateDragBox(e);
+    if (placement) updateGhost(e.clientX, e.clientY);
   });
 
   canvas.addEventListener('pointerleave', () => { pointer.inside = false; });
 
   canvas.addEventListener('pointerdown', (e) => {
     if (mode !== 'game') return;
+
     if (e.button === 0) {
+      if (placement) {
+        tryPlace(e.clientX, e.clientY);
+        return;
+      }
       drag.active = true;
       drag.moved = false;
       drag.startX = e.clientX;
@@ -237,6 +262,7 @@ function setupInput() {
       box.style.width = '0px';
       box.style.height = '0px';
     } else if (e.button === 2) {
+      if (placement) { cancelPlacement(); return; }
       issueMoveOrder(e);
     }
   });
@@ -247,11 +273,8 @@ function setupInput() {
     $('select-box').classList.add('hidden');
     if (mode !== 'game') return;
 
-    if (drag.moved) {
-      boxSelect(e.shiftKey);
-    } else {
-      clickSelect(e.clientX, e.clientY, e.shiftKey);
-    }
+    if (drag.moved) boxSelect(e.shiftKey);
+    else clickSelect(e.clientX, e.clientY, e.shiftKey);
   });
 
   canvas.addEventListener('wheel', (e) => {
@@ -259,6 +282,17 @@ function setupInput() {
     if (mode !== 'game') return;
     cam.targetDist = THREE.MathUtils.clamp(cam.targetDist * (1 + e.deltaY * 0.0012), 18, 110);
   }, { passive: false });
+
+  // Minimap
+  const mm = $('minimap');
+  const jump = (ev) => {
+    const r = mm.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width) * MAP_SIZE - MAP_SIZE / 2;
+    const z = ((ev.clientY - r.top) / r.height) * MAP_SIZE - MAP_SIZE / 2;
+    cam.focus.set(x, 0, z);
+  };
+  mm.addEventListener('pointerdown', (ev) => { jump(ev); mm.setPointerCapture(ev.pointerId); });
+  mm.addEventListener('pointermove', (ev) => { if (ev.buttons & 1) jump(ev); });
 }
 
 function updateDragBox(e) {
@@ -289,88 +323,1097 @@ function groundPoint(x, y) {
   return raycaster.ray.intersectPlane(groundPlane, p) ? p : null;
 }
 
-function pickUnit(x, y) {
+function pickEntity(x, y) {
   raycaster.setFromCamera(ndcFromClient(x, y), camera);
   const meshes = [];
   for (const u of units.values()) meshes.push(u.mesh);
+  for (const b of buildings.values()) meshes.push(b.mesh);
 
   const hits = raycaster.intersectObjects(meshes, true);
   for (const hit of hits) {
     let obj = hit.object;
-    while (obj && !obj.userData.unitId) obj = obj.parent;
-    if (obj) return obj.userData.unitId;
+    while (obj && !obj.userData.entityId) obj = obj.parent;
+    if (obj) return obj.userData.entityId;
   }
   return null;
 }
 
 function clickSelect(x, y, additive) {
-  const id = pickUnit(x, y);
+  const id = pickEntity(x, y);
   if (!additive) clearSelection();
   if (!id) return;
 
-  const unit = units.get(id);
-  if (!unit || unit.owner !== myId) return;
+  const e = getEntity(id);
+  if (!e || e.owner !== myId) return;
 
   if (additive && selected.has(id)) {
     selected.delete(id);
-    unit.ring.visible = false;
+    if (e.ring) e.ring.visible = false;
   } else {
     selected.add(id);
-    unit.ring.visible = true;
+    if (e.ring) e.ring.visible = true;
   }
-  updateSelectionPanel();
+  refreshSelection();
 }
 
 function boxSelect(additive) {
   const box = $('select-box');
-  const rect = {
-    left: parseFloat(box.style.left) || 0,
-    top: parseFloat(box.style.top) || 0,
-    right: (parseFloat(box.style.left) || 0) + (parseFloat(box.style.width) || 0),
-    bottom: (parseFloat(box.style.top) || 0) + (parseFloat(box.style.height) || 0)
-  };
+  const left = parseFloat(box.style.left) || 0;
+  const top = parseFloat(box.style.top) || 0;
+  const right = left + (parseFloat(box.style.width) || 0);
+  const bottom = top + (parseFloat(box.style.height) || 0);
 
   if (!additive) clearSelection();
 
   const v = new THREE.Vector3();
-  for (const unit of units.values()) {
-    if (unit.owner !== myId) continue;
-    v.copy(unit.mesh.position);
-    v.y += 1;
-    v.project(camera);
+  for (const u of units.values()) {
+    if (u.owner !== myId) continue;
+    v.set(u.x, 1, u.z).project(camera);
     const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
     const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
-    if (sx >= rect.left && sx <= rect.right && sy >= rect.top && sy <= rect.bottom) {
-      selected.add(unit.id);
-      unit.ring.visible = true;
+    if (sx >= left && sx <= right && sy >= top && sy <= bottom) {
+      selected.add(u.id);
+      if (u.ring) u.ring.visible = true;
     }
   }
-  updateSelectionPanel();
+  refreshSelection();
 }
 
 function clearSelection() {
   for (const id of selected) {
-    const unit = units.get(id);
-    if (unit) unit.ring.visible = false;
+    const e = getEntity(id);
+    if (e && e.ring) e.ring.visible = false;
   }
   selected.clear();
+  refreshSelection();
+}
+
+function refreshSelection() {
   updateSelectionPanel();
+  renderCommandPanel();
+}
+
+/* ------------------------------------------------------------------ entités */
+
+function getEntity(id) {
+  return units.get(id) || buildings.get(id) || null;
+}
+
+function colorOf(ownerId) {
+  const p = players.find((x) => x.id === ownerId);
+  return p ? p.color : '#8a94a6';
+}
+
+function factionOfOwner(ownerId) {
+  const p = players.find((x) => x.id === ownerId);
+  return p ? p.faction : 'atlantic';
+}
+
+function isLocal(ownerId) {
+  return ownerId === myId || (isHost && ownerId === aiId);
+}
+
+function makeRing(radius, color) {
+  const ring = createSelectionRing(color);
+  ring.scale.setScalar(radius);
+  ring.visible = false;
+  return ring;
+}
+
+function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
+  if (units.has(id)) return units.get(id);
+
+  const faction = factionOfOwner(owner);
+  const def = unitDef(faction, type) || unitDef('atlantic', 'vanguard');
+  const mesh = createUnit(def.shape, colorOf(owner), faction);
+  mesh.position.set(x, 0, z);
+  mesh.rotation.y = ry;
+  mesh.userData.entityId = id;
+
+  const ring = makeRing(def.shape === 'infantry' || def.shape === 'infantry-at' ? 1.6 : 2.2, 0x8ef7b0);
+  mesh.add(ring);
+
+  const bar = createHealthBar();
+  bar.rotation.x = -Math.PI / 2;
+  bar.position.y = 2.4;
+  bar.visible = false;
+  mesh.add(bar);
+
+  scene.add(mesh);
+
+  const unit = {
+    id, kind: 'unit', type, owner, faction, def, mesh, ring, bar,
+    x, z, ry,
+    hp: hp == null ? def.hp : hp,
+    maxHp: def.hp,
+    target: null,
+    state: 'idle',
+    cd: Math.random() * 0.5,
+    carry: 0,
+    fieldId: null,
+    buildTarget: null,
+    netPos: new THREE.Vector3(x, 0, z),
+    netRot: ry,
+    seenAt: performance.now()
+  };
+  units.set(id, unit);
+  return unit;
+}
+
+function addBuilding({ id, type, owner, x, z, progress = 1, hp = null }) {
+  if (buildings.has(id)) return buildings.get(id);
+
+  const faction = factionOfOwner(owner);
+  const def = buildingDef(faction, type) || buildingDef('atlantic', 'barracks');
+  const mesh = createBuilding(def.shape, colorOf(owner), faction);
+  mesh.position.set(x, 0, z);
+  mesh.userData.entityId = id;
+
+  const ring = makeRing(Math.max(def.w, def.d) * 0.62, 0x8ef7b0);
+  mesh.add(ring);
+
+  const bar = createHealthBar();
+  bar.rotation.x = -Math.PI / 2;
+  bar.position.y = def.h + 0.6;
+  bar.visible = false;
+  mesh.add(bar);
+
+  const scaffold = createScaffold(def.w, def.h, def.d);
+  mesh.add(scaffold);
+
+  scene.add(mesh);
+
+  const b = {
+    id, kind: 'building', type, owner, faction, def, mesh, ring, bar, scaffold,
+    x, z,
+    hp: hp == null ? def.hp : hp,
+    maxHp: def.hp,
+    progress,
+    built: progress >= 1,
+    queue: [],
+    cd: 0,
+    seenAt: performance.now()
+  };
+  applyBuildVisual(b);
+  buildings.set(id, b);
+  return b;
+}
+
+function applyBuildVisual(b) {
+  const p = Math.max(0.02, b.progress);
+  b.mesh.scale.y = b.built ? 1 : 0.15 + 0.85 * p;
+  b.scaffold.visible = !b.built;
+}
+
+function removeEntity(id) {
+  const u = units.get(id);
+  if (u) {
+    scene.remove(u.mesh);
+    disposeTree(u.mesh);
+    units.delete(id);
+    selected.delete(id);
+    return;
+  }
+  const b = buildings.get(id);
+  if (b) {
+    scene.remove(b.mesh);
+    disposeTree(b.mesh);
+    buildings.delete(id);
+    selected.delete(id);
+    recomputeEnergy();
+  }
+}
+
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.isMesh) {
+      o.geometry.dispose();
+      if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+      else o.material.dispose();
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ économie */
+
+function recomputeEnergy() {
+  let prod = 0;
+  let use = 0;
+  for (const b of buildings.values()) {
+    if (b.owner !== myId || !b.built) continue;
+    const e = b.def.energy || 0;
+    if (e > 0) prod += e;
+    else use += -e;
+  }
+  energyProd = prod;
+  energyUse = use;
+  lowPower = use > prod;
+  const el = $('low-power');
+  if (el) el.classList.toggle('hidden', !lowPower);
+}
+
+function speedFactor(owner) {
+  if (owner === myId) return lowPower ? 0.5 : 1;
+  if (owner === aiId) return energyUseFor(aiId) > energyProdFor(aiId) ? 0.5 : 1;
+  return 1;
+}
+
+/* -------------------------------------------------------------- construction */
+
+function startPlacement(type) {
+  const def = buildingDef(profile.faction, type);
+  if (!def) return;
+  if (money < def.cost) { toast('Fonds insuffisants.'); return; }
+
+  cancelPlacement();
+  const ghost = createGhost(def.shape, colorOf(myId), profile.faction);
+  scene.add(ghost);
+  placement = { type, def, ghost, valid: false, x: 0, z: 0 };
+  $('hud').classList.add('placing');
+}
+
+function cancelPlacement() {
+  if (!placement) return;
+  scene.remove(placement.ghost);
+  disposeTree(placement.ghost);
+  placement = null;
+  $('hud').classList.remove('placing');
+}
+
+function updateGhost(cx, cy) {
+  const p = groundPoint(cx, cy);
+  if (!p) return;
+  const x = Math.round(p.x);
+  const z = Math.round(p.z);
+  placement.x = x;
+  placement.z = z;
+  placement.ghost.position.set(x, 0, z);
+  placement.valid = canPlace(placement.def, x, z);
+  placement.ghost.userData.setValid(placement.valid);
+}
+
+function canPlace(def, x, z) {
+  const half = MAP_SIZE / 2 - 3;
+  if (Math.abs(x) > half || Math.abs(z) > half) return false;
+
+  for (const b of buildings.values()) {
+    const pad = 1.2;
+    if (Math.abs(b.x - x) < (b.def.w + def.w) / 2 + pad &&
+        Math.abs(b.z - z) < (b.def.d + def.d) / 2 + pad) return false;
+  }
+
+  for (const f of fields.values()) {
+    if (Math.hypot(f.def.x - x, f.def.z - z) < f.def.radius + Math.max(def.w, def.d) / 2) return false;
+  }
+
+  for (const s of SPAWNS) {
+    if (Math.hypot(s.x - x, s.z - z) < 5) return false;
+  }
+  return true;
+}
+
+function tryPlace(cx, cy) {
+  if (!placement) return;
+  updateGhost(cx, cy);
+  if (!placement.valid) { toast('Emplacement bloqué.'); return; }
+
+  const { type, def, x, z } = placement;
+  if (money < def.cost) { toast('Fonds insuffisants.'); cancelPlacement(); return; }
+
+  money -= def.cost;
+  const builder = [...selected].map(getEntity).find((e) => e && e.kind === 'unit' && e.def.role === 'constructeur');
+  placeBuilding(myId, type, x, z, builder ? builder.id : null);
+  cancelPlacement();
+  updateHud();
+  renderCommandPanel();
+}
+
+function placeBuilding(owner, type, x, z, builderId) {
+  const def = buildingDef(factionOfOwner(owner), type);
+  const id = `${owner}:b${++entitySeq}`;
+  const b = addBuilding({ id, type, owner, x, z, progress: 0, hp: def.hp * 0.15 });
+
+  if (builderId) {
+    const builder = units.get(builderId);
+    if (builder) {
+      builder.state = 'building';
+      builder.buildTarget = id;
+      builder.target = { x: x + (def.w / 2 + 1.5), z: z + (def.d / 2 + 1.5) };
+    }
+  }
+  return b;
+}
+
+function updateConstruction(b, dt) {
+  if (b.built) return;
+
+  let builder = null;
+  for (const u of units.values()) {
+    if (u.buildTarget === b.id && u.owner === b.owner) { builder = u; break; }
+  }
+  if (!builder) return;
+
+  const dist = Math.hypot(builder.x - b.x, builder.z - b.z);
+  if (dist > Math.max(b.def.w, b.def.d) / 2 + 3.5) return;
+
+  const rate = (1 / b.def.time) * speedFactor(b.owner) * (b.owner === aiId ? aiSpeed() : 1);
+  b.progress = Math.min(1, b.progress + rate * dt);
+  b.hp = b.maxHp * (0.15 + 0.85 * b.progress);
+  applyBuildVisual(b);
+
+  if (b.progress >= 1) {
+    b.built = true;
+    b.hp = b.maxHp;
+    applyBuildVisual(b);
+    recomputeEnergy();
+    if (b.owner === myId) toast(`${b.def.name} opérationnel.`);
+
+    if (b.def.freeUnit) spawnFromBuilding(b, b.def.freeUnit, true);
+
+    if (builder) {
+      builder.buildTarget = null;
+      builder.state = 'idle';
+      builder.target = null;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- production */
+
+function queueUnit(b, type) {
+  const def = unitDef(b.faction, type);
+  if (!def) return;
+  if (money < def.cost) { toast('Fonds insuffisants.'); return; }
+  if (b.queue.length >= 5) { toast('File de production pleine.'); return; }
+  money -= def.cost;
+  b.queue.push({ type, progress: 0 });
+  updateHud();
+}
+
+function updateProduction(b, dt) {
+  if (!b.built || !b.queue.length) return;
+  const job = b.queue[0];
+  const def = unitDef(b.faction, job.type);
+  if (!def) { b.queue.shift(); return; }
+
+  const rate = (1 / def.time) * speedFactor(b.owner) * (b.owner === aiId ? aiSpeed() : 1);
+  job.progress += rate * dt;
+
+  if (job.progress >= 1) {
+    b.queue.shift();
+    spawnFromBuilding(b, job.type, false);
+  }
+}
+
+function spawnFromBuilding(b, type, free) {
+  const def = unitDef(b.faction, type);
+  if (!def) return;
+
+  const a = Math.random() * Math.PI * 2;
+  const r = Math.max(b.def.w, b.def.d) / 2 + 2.5;
+  const x = THREE.MathUtils.clamp(b.x + Math.cos(a) * r, -47, 47);
+  const z = THREE.MathUtils.clamp(b.z + Math.sin(a) * r, -47, 47);
+
+  const id = `${b.owner}:u${++entitySeq}`;
+  const u = addUnit({ id, type, owner: b.owner, x, z, ry: Math.atan2(-Math.cos(a), -Math.sin(a)) });
+
+  if (free && b.owner === myId) toast(`${def.name} livré.`);
+  return u;
+}
+
+/* ------------------------------------------------------------------- récolte */
+
+function nearestField(x, z) {
+  let best = null;
+  let bestD = Infinity;
+  for (const f of fields.values()) {
+    if (f.remaining <= 0) continue;
+    const d = Math.hypot(f.def.x - x, f.def.z - z);
+    if (d < bestD) { bestD = d; best = f; }
+  }
+  return best;
+}
+
+function nearestRefinery(owner, x, z) {
+  let best = null;
+  let bestD = Infinity;
+  for (const b of buildings.values()) {
+    if (b.owner !== owner || !b.built) continue;
+    if (!b.def.freeUnit) continue;
+    const d = Math.hypot(b.x - x, b.z - z);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+}
+
+function updateCollector(u, dt) {
+  if (u.state === 'idle') {
+    const f = nearestField(u.x, u.z);
+    if (!f) return;
+    u.fieldId = f.def.id;
+    u.state = 'toField';
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * f.def.radius * 0.7;
+    u.target = { x: f.def.x + Math.cos(a) * r, z: f.def.z + Math.sin(a) * r };
+    return;
+  }
+
+  if (u.state === 'toField') {
+    const f = fields.get(u.fieldId);
+    if (!f || f.remaining <= 0) { u.state = 'idle'; u.target = null; return; }
+    if (!u.target) { u.state = 'idle'; return; }
+    if (Math.hypot(u.x - u.target.x, u.z - u.target.z) < 1.2) {
+      u.state = 'harvesting';
+      u.harvestT = 0;
+      u.target = null;
+    }
+    return;
+  }
+
+  if (u.state === 'harvesting') {
+    u.harvestT += dt;
+    if (u.harvestT < HARVEST_TIME) return;
+
+    const f = fields.get(u.fieldId);
+    if (!f || f.remaining <= 0) { u.state = 'idle'; return; }
+
+    const amount = Math.min(HARVEST_LOAD, f.remaining);
+    takeFromField(f, amount);
+    u.carry = amount;
+    u.state = 'toRefinery';
+
+    const ref = nearestRefinery(u.owner, u.x, u.z);
+    if (!ref) { u.state = 'idle'; return; }
+    u.refineryId = ref.id;
+    u.target = { x: ref.x + (ref.def.w / 2 + 1.5), z: ref.z + (ref.def.d / 2 + 1.5) };
+    return;
+  }
+
+  if (u.state === 'toRefinery') {
+    const ref = buildings.get(u.refineryId);
+    if (!ref || !ref.built) { u.state = 'idle'; u.target = null; return; }
+    if (!u.target) { u.state = 'idle'; return; }
+    if (Math.hypot(u.x - u.target.x, u.z - u.target.z) < 1.6) {
+      if (u.owner === myId) money += u.carry;
+      else if (isHost && u.owner === aiId) aiMoney += u.carry;
+      u.carry = 0;
+      u.state = 'idle';
+      u.target = null;
+    }
+  }
+}
+
+function takeFromField(f, amount) {
+  f.remaining = Math.max(0, f.remaining - amount);
+  f.alive = Math.ceil((f.remaining / f.def.value) * f.def.crystals);
+  f.group.userData.setAlive(f.alive);
+  net.sendHarvest({ field: f.def.id, amount });
+}
+
+function applyHarvest(fieldId, amount) {
+  const f = fields.get(fieldId);
+  if (!f) return;
+  f.remaining = Math.max(0, f.remaining - amount);
+  f.alive = Math.ceil((f.remaining / f.def.value) * f.def.crystals);
+  f.group.userData.setAlive(f.alive);
+}
+
+function updateFields(dt) {
+  for (const f of fields.values()) {
+    if (f.remaining <= 0 || f.remaining >= f.def.value) continue;
+    f.regrowT += dt * 1000;
+    if (f.regrowT >= CRYSTAL_REGROW_MS) {
+      f.regrowT = 0;
+      f.remaining = Math.min(f.def.value, f.remaining + f.def.value / f.def.crystals);
+      f.alive = Math.ceil((f.remaining / f.def.value) * f.def.crystals);
+      f.group.userData.setAlive(f.alive);
+    }
+  }
+}
+
+/* -------------------------------------------------------------------- combat */
+
+function findTarget(u) {
+  const range = u.def.range || 0;
+  if (!range) return null;
+  let best = null;
+  let bestD = range;
+
+  for (const e of units.values()) {
+    if (e.owner === u.owner) continue;
+    const d = Math.hypot(e.x - u.x, e.z - u.z);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  for (const e of buildings.values()) {
+    if (e.owner === u.owner) continue;
+    const d = Math.hypot(e.x - u.x, e.z - u.z) - Math.max(e.def.w, e.def.d) / 2;
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best;
+}
+
+function updateCombat(u, dt) {
+  if (!u.def.dmg) return;
+  u.cd -= dt;
+  if (u.cd > 0) return;
+
+  const target = findTarget(u);
+  if (!target) return;
+
+  u.cd = u.def.cd;
+  u.ry = Math.atan2(target.x - u.x, target.z - u.z);
+  u.mesh.rotation.y = u.ry;
+
+  spawnTracer(u, target);
+
+  if (isLocal(target.owner)) {
+    applyDamage(target, u.def.dmg);
+  } else {
+    net.sendHit({ target: target.id, dmg: u.def.dmg });
+  }
+}
+
+function spawnTracer(from, to) {
+  const a = new THREE.Vector3(from.x, 1.2, from.z);
+  const b = new THREE.Vector3(to.x, 1.0, to.z);
+  const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color: 0xffd166, transparent: true, opacity: 0.9
+  }));
+  scene.add(line);
+  tracers.push({ line, life: 0.12 });
+}
+
+function updateTracers(dt) {
+  for (let i = tracers.length - 1; i >= 0; i--) {
+    const t = tracers[i];
+    t.life -= dt;
+    t.line.material.opacity = Math.max(0, t.life / 0.12);
+    if (t.life <= 0) {
+      scene.remove(t.line);
+      t.line.geometry.dispose();
+      t.line.material.dispose();
+      tracers.splice(i, 1);
+    }
+  }
+}
+
+function applyDamage(entity, dmg) {
+  entity.hp -= dmg;
+  if (entity.hp <= 0) {
+    if (entity.kind === 'unit' && entity.def.suicide) {
+      for (const e of [...units.values(), ...buildings.values()]) {
+        if (e.owner === entity.owner) continue;
+        if (Math.hypot(e.x - entity.x, e.z - entity.z) < 6) applyDamage(e, 60);
+      }
+    }
+    removeEntity(entity.id);
+  }
+}
+
+/* --------------------------------------------------------------- brouillard */
+
+const FOG_RES = 192;
+let fogCanvas, fogCtx, fogTex, fogMesh, exploredCanvas, exploredCtx, visCanvas, visCtx;
+
+function setupFog() {
+  fogCanvas = document.createElement('canvas');
+  fogCanvas.width = fogCanvas.height = FOG_RES;
+  fogCtx = fogCanvas.getContext('2d');
+
+  exploredCanvas = document.createElement('canvas');
+  exploredCanvas.width = exploredCanvas.height = FOG_RES;
+  exploredCtx = exploredCanvas.getContext('2d');
+
+  visCanvas = document.createElement('canvas');
+  visCanvas.width = visCanvas.height = FOG_RES;
+  visCtx = visCanvas.getContext('2d');
+
+  fogTex = new THREE.CanvasTexture(fogCanvas);
+  fogTex.colorSpace = THREE.SRGBColorSpace;
+
+  fogMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE),
+    new THREE.MeshBasicMaterial({ map: fogTex, transparent: true, depthWrite: false })
+  );
+  fogMesh.rotation.x = -Math.PI / 2;
+  fogMesh.position.y = 0.5;
+  fogMesh.renderOrder = 2;
+  scene.add(fogMesh);
+}
+
+function worldToFog(x, z) {
+  return [((x + MAP_SIZE / 2) / MAP_SIZE) * FOG_RES, ((z + MAP_SIZE / 2) / MAP_SIZE) * FOG_RES];
+}
+
+function drawSight(ctx, x, z, radius, alpha) {
+  const [fx, fz] = worldToFog(x, z);
+  const r = (radius / MAP_SIZE) * FOG_RES;
+  const g = ctx.createRadialGradient(fx, fz, r * 0.55, fx, fz, r);
+  g.addColorStop(0, `rgba(255,255,255,${alpha})`);
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(fx, fz, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function updateFog() {
+  if (!settings.fog) { fogMesh.visible = false; return; }
+  fogMesh.visible = true;
+
+  visCtx.clearRect(0, 0, FOG_RES, FOG_RES);
+
+  for (const u of units.values()) {
+    if (u.owner !== myId) continue;
+    drawSight(visCtx, u.x, u.z, u.def.sight || 14, 1);
+    drawSight(exploredCtx, u.x, u.z, u.def.sight || 14, 1);
+  }
+  for (const b of buildings.values()) {
+    if (b.owner !== myId) continue;
+    const r = Math.max(b.def.w, b.def.d) / 2 + 14;
+    drawSight(visCtx, b.x, b.z, r, 1);
+    drawSight(exploredCtx, b.x, b.z, r, 1);
+  }
+
+  fogCtx.globalCompositeOperation = 'source-over';
+  fogCtx.fillStyle = 'rgba(5,7,10,0.93)';
+  fogCtx.fillRect(0, 0, FOG_RES, FOG_RES);
+
+  fogCtx.globalCompositeOperation = 'destination-out';
+  fogCtx.globalAlpha = 0.62;
+  fogCtx.drawImage(exploredCanvas, 0, 0);
+  fogCtx.globalAlpha = 1;
+  fogCtx.drawImage(visCanvas, 0, 0);
+  fogCtx.globalCompositeOperation = 'source-over';
+
+  fogTex.needsUpdate = true;
+}
+
+/** Révèle une zone autour de la base au démarrage (repères initiaux). */
+function revealStartArea() {
+  const cc = [...buildings.values()].find((b) => b.owner === myId && b.type === 'cc');
+  if (!cc) return;
+  drawSight(exploredCtx, cc.x, cc.z, 30, 1);
+}
+
+function isVisibleToMe(x, z, extra = 0) {
+  if (!settings.fog) return true;
+  for (const u of units.values()) {
+    if (u.owner !== myId) continue;
+    const r = (u.def.sight || 14) + extra;
+    if ((u.x - x) ** 2 + (u.z - z) ** 2 < r * r) return true;
+  }
+  for (const b of buildings.values()) {
+    if (b.owner !== myId) continue;
+    const r = Math.max(b.def.w, b.def.d) / 2 + 14 + extra;
+    if ((b.x - x) ** 2 + (b.z - z) ** 2 < r * r) return true;
+  }
+  return false;
+}
+
+function updateVisibility() {
+  for (const u of units.values()) {
+    if (u.owner === myId) { u.mesh.visible = true; continue; }
+    u.mesh.visible = isVisibleToMe(u.x, u.z);
+  }
+  for (const b of buildings.values()) {
+    if (b.owner === myId) { b.mesh.visible = true; continue; }
+    b.mesh.visible = isVisibleToMe(b.x, b.z);
+  }
+  // Le décor dépasse du plan de brouillard : on le masque hors vision
+  for (const r of decorRocks) {
+    r.visible = isVisibleToMe(r.position.x, r.position.z, 4);
+  }
+  for (const f of fields.values()) {
+    f.group.visible = isVisibleToMe(f.def.x, f.def.z, f.def.radius);
+  }
+}
+
+/* ------------------------------------------------------------------ minimap */
+
+let mmCtx = null;
+
+function setupMinimap() {
+  mmCtx = $('minimap').getContext('2d');
+}
+
+function drawMinimap() {
+  if (!mmCtx) return;
+  const S = 190;
+  const k = S / MAP_SIZE;
+  const px = (x) => (x + MAP_SIZE / 2) * k;
+
+  mmCtx.fillStyle = '#0d1218';
+  mmCtx.fillRect(0, 0, S, S);
+
+  for (const f of fields.values()) {
+    mmCtx.fillStyle = f.def.color;
+    mmCtx.globalAlpha = 0.25 + 0.5 * (f.remaining / f.def.value);
+    mmCtx.beginPath();
+    mmCtx.arc(px(f.def.x), px(f.def.z), f.def.radius * k, 0, Math.PI * 2);
+    mmCtx.fill();
+  }
+  mmCtx.globalAlpha = 1;
+
+  for (const b of buildings.values()) {
+    if (b.owner !== myId && !b.mesh.visible) continue;
+    mmCtx.fillStyle = colorOf(b.owner);
+    const w = Math.max(3, b.def.w * k);
+    mmCtx.fillRect(px(b.x) - w / 2, px(b.z) - w / 2, w, w);
+  }
+
+  for (const u of units.values()) {
+    if (u.owner !== myId && !u.mesh.visible) continue;
+    mmCtx.fillStyle = colorOf(u.owner);
+    mmCtx.beginPath();
+    mmCtx.arc(px(u.x), px(u.z), 2, 0, Math.PI * 2);
+    mmCtx.fill();
+  }
+
+  const halfW = cam.dist * 0.9;
+  const halfH = cam.dist * 0.55;
+  mmCtx.strokeStyle = 'rgba(255,255,255,0.55)';
+  mmCtx.lineWidth = 1;
+  mmCtx.strokeRect(
+    px(cam.focus.x - halfW), px(cam.focus.z - halfH),
+    halfW * 2 * k, halfH * 2 * k
+  );
+}
+
+/* ---------------------------------------------------------------------- HUD */
+
+function updateHud() {
+  $('hud-money').textContent = Math.floor(money).toLocaleString('fr-FR');
+  $('power-label').textContent = `${energyProd} / ${energyUse}`;
+  const ratio = energyUse === 0 ? 1 : Math.min(1, energyProd / energyUse);
+  $('power-fill').style.height = `${Math.max(4, ratio * 100)}%`;
+  $('power-fill').classList.toggle('bad', lowPower);
+  $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
 }
 
 function updateSelectionPanel() {
   const el = $('hud-selection');
   if (!el) return;
-  if (!selected.size) {
-    el.textContent = 'Aucune unité sélectionnée';
-    return;
-  }
+  if (!selected.size) { el.textContent = 'Aucune sélection'; return; }
+
   const counts = new Map();
   for (const id of selected) {
-    const unit = units.get(id);
-    if (!unit) continue;
-    counts.set(unit.spec.label, (counts.get(unit.spec.label) || 0) + 1);
+    const e = getEntity(id);
+    if (!e) continue;
+    counts.set(e.def.name, (counts.get(e.def.name) || 0) + 1);
   }
-  el.textContent = [...counts.entries()].map(([label, n]) => `${n} × ${label}`).join(' · ');
+  el.textContent = [...counts.entries()].map(([l, n]) => `${n} × ${l}`).join(' · ');
+}
+
+function renderCommandPanel() {
+  const panel = $('cmd-panel');
+  panel.textContent = '';
+  panel.classList.add('hidden');
+  if (mode !== 'game' || !selected.size) return;
+
+  const sel = [...selected].map(getEntity).filter(Boolean);
+  const builder = sel.find((e) => e.kind === 'unit' && e.def.role === 'constructeur');
+  if (builder) { renderBuildMenu(panel); return; }
+
+  const prod = sel.find((e) => e.kind === 'building' && e.built && e.def.produces && e.def.produces.length);
+  if (prod) { renderProduceMenu(panel, prod); return; }
+}
+
+function renderBuildMenu(panel) {
+  panel.classList.remove('hidden');
+  const title = document.createElement('div');
+  title.className = 'cmd-title';
+  title.textContent = 'Construction';
+  panel.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'cmd-grid';
+
+  for (const def of buildableList(profile.faction)) {
+    const btn = document.createElement('button');
+    btn.className = 'cmd-btn';
+    btn.disabled = money < def.cost;
+    btn.innerHTML = `
+      <span class="cmd-name">${def.name}</span>
+      <span class="cmd-cost">$${def.cost.toLocaleString('fr-FR')}${def.energy ? ` · ${def.energy > 0 ? '+' : ''}${def.energy}⚡` : ''}</span>
+      <span class="cmd-desc">${def.desc || ''}</span>`;
+    btn.addEventListener('click', () => startPlacement(def.id));
+    grid.appendChild(btn);
+  }
+  panel.appendChild(grid);
+}
+
+function renderProduceMenu(panel, b) {
+  panel.classList.remove('hidden');
+  const title = document.createElement('div');
+  title.className = 'cmd-title';
+  title.textContent = b.def.name;
+
+  if (b.queue.length) {
+    const q = document.createElement('span');
+    q.className = 'cmd-queue';
+    q.textContent = `file : ${b.queue.map((j) => unitDef(b.faction, j.type).name).join(', ')}`;
+    title.appendChild(q);
+  }
+  panel.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'cmd-grid';
+
+  for (const type of b.def.produces) {
+    const def = unitDef(b.faction, type);
+    if (!def) continue;
+    const btn = document.createElement('button');
+    btn.className = 'cmd-btn';
+    btn.disabled = money < def.cost;
+    btn.innerHTML = `
+      <span class="cmd-name">${def.name}</span>
+      <span class="cmd-cost">$${def.cost.toLocaleString('fr-FR')} · ${def.time}s</span>
+      <span class="cmd-desc">${def.role || ''}</span>`;
+    btn.addEventListener('click', () => { queueUnit(b, type); renderCommandPanel(); });
+    grid.appendChild(btn);
+  }
+  panel.appendChild(grid);
+}
+
+let toastTimer = null;
+function toast(message) {
+  const el = $('toasts');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+/* ----------------------------------------------------------------------- IA */
+
+let aiMoney = 0;
+let aiThink = 0;
+let aiWave = [];
+let aiAttacking = false;
+
+function aiSpeed() {
+  return (DIFFICULTY[settings.ai] || DIFFICULTY.normal).speed;
+}
+
+function aiFaction() {
+  const p = players.find((x) => x.id === aiId);
+  return p ? p.faction : 'eurasia';
+}
+
+function aiCount(type) {
+  let n = 0;
+  for (const b of buildings.values()) if (b.owner === aiId && b.type === type) n++;
+  return n;
+}
+
+function aiFindSpot(def) {
+  const cc = [...buildings.values()].find((b) => b.owner === aiId && b.type === 'cc');
+  if (!cc) return null;
+  for (let ring = 1; ring <= 5; ring++) {
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + ring * 0.4;
+      const r = 8 + ring * 5;
+      const x = Math.round(cc.x + Math.cos(a) * r);
+      const z = Math.round(cc.z + Math.sin(a) * r);
+      if (canPlace(def, x, z)) return { x, z };
+    }
+  }
+  return null;
+}
+
+function aiBuild(type) {
+  const def = buildingDef(aiFaction(), type);
+  if (!def || aiMoney < def.cost) return false;
+  const spot = aiFindSpot(def);
+  if (!spot) return false;
+
+  const builder = [...units.values()].find((u) => u.owner === aiId && u.def.role === 'constructeur' && !u.buildTarget);
+  if (!builder) return false;
+
+  aiMoney -= def.cost;
+  placeBuilding(aiId, type, spot.x, spot.z, builder.id);
+  return true;
+}
+
+function aiProduce(type) {
+  const def = unitDef(aiFaction(), type);
+  if (!def || aiMoney < def.cost) return false;
+
+  for (const b of buildings.values()) {
+    if (b.owner !== aiId || !b.built) continue;
+    if (!b.def.produces || !b.def.produces.includes(type)) continue;
+    if (b.queue.length >= 2) continue;
+    aiMoney -= def.cost;
+    b.queue.push({ type, progress: 0 });
+    return true;
+  }
+  return false;
+}
+
+function energyProdFor(owner) {
+  let p = 0;
+  for (const b of buildings.values()) if (b.owner === owner && b.built && b.def.energy > 0) p += b.def.energy;
+  return p;
+}
+
+function energyUseFor(owner) {
+  let u = 0;
+  for (const b of buildings.values()) if (b.owner === owner && b.built && b.def.energy < 0) u += -b.def.energy;
+  return u;
+}
+
+function nearestEnemyBuilding(owner) {
+  const mine = [...buildings.values()].filter((b) => b.owner === owner);
+  if (!mine.length) return null;
+  const origin = mine[0];
+  let best = null;
+  let bestD = Infinity;
+  for (const b of buildings.values()) {
+    if (b.owner === owner) continue;
+    const d = Math.hypot(b.x - origin.x, b.z - origin.z);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+}
+
+function updateAI(dt) {
+  if (!aiId || !isHost) return;
+  aiThink -= dt;
+  if (aiThink > 0) return;
+  aiThink = (DIFFICULTY[settings.ai] || DIFFICULTY.normal).think;
+
+  const faction = factionOf(aiFaction());
+  const hasPower = faction.usesPower;
+  const waveSize = (DIFFICULTY[settings.ai] || DIFFICULTY.normal).wave;
+  const army = [...units.values()].filter((u) => u.owner === aiId && u.def.dmg);
+  const collectors = [...units.values()].filter((u) => u.owner === aiId && u.def.role === 'récolte').length
+    + [...buildings.values()]
+      .filter((b) => b.owner === aiId)
+      .reduce((n, b) => n + b.queue.filter((j) => j.type === 'collector').length, 0);
+
+  // 1. Socle économique
+  if (hasPower && aiCount('power') < 1) { if (aiBuild('power')) return; }
+  if (aiCount('refinery') < 1) { if (aiBuild('refinery')) return; }
+  if (aiCount('barracks') < 1) { if (aiBuild('barracks')) return; }
+
+  // 2. Deuxième collecteur dès que la trésorerie le permet
+  if (collectors < 2 && aiCount('refinery') > 0 && aiMoney > 1100) {
+    if (aiProduce('collector')) return;
+  }
+
+  // 3. Infanterie en continu (seuil basé sur le coût réel)
+  if (army.length < waveSize + 4) {
+    const barracks = [...buildings.values()].find((b) => b.owner === aiId && b.type === 'barracks' && b.built);
+    if (barracks) {
+      const cheapest = barracks.def.produces
+        .map((t) => ({ t, d: unitDef(aiFaction(), t) }))
+        .filter((x) => x.d && x.d.cost <= aiMoney)
+        .sort((a, b) => a.d.cost - b.d.cost)[0];
+      if (cheapest && aiProduce(cheapest.t)) return;
+    }
+  }
+
+  // 4. Industrie lourde quand la trésorerie le permet
+  if (aiCount('factory') < 1 && aiMoney > 2000) { if (aiBuild('factory')) return; }
+  if (hasPower && energyUseFor(aiId) > energyProdFor(aiId) && aiCount('power') < 3) {
+    if (aiBuild('power')) return;
+  }
+  if (aiCount('turret') < 2 && aiMoney > 1200) { if (aiBuild('turret')) return; }
+  if (aiCount('research') < 1 && aiMoney > 2400) { if (aiBuild('research')) return; }
+
+  // 5. Véhicules
+  const factory = [...buildings.values()].find((b) => b.owner === aiId && b.type === 'factory' && b.built);
+  if (factory && aiMoney > 900) {
+    const pick = factory.def.produces
+      .map((t) => ({ t, d: unitDef(aiFaction(), t) }))
+      .filter((x) => x.d && x.d.cost <= aiMoney)
+      .sort((a, b) => b.d.cost - a.d.cost)[0];
+    if (pick) aiProduce(pick.t);
+  }
+
+  const elapsed = performance.now() - matchStart;
+  if (!aiAttacking && (army.length >= waveSize || (elapsed > 150000 && army.length >= 3))) {
+    aiAttacking = true;
+    aiWave = army;
+    const target = nearestEnemyBuilding(aiId);
+    if (target) {
+      for (const u of army) {
+        u.target = { x: target.x + (Math.random() - 0.5) * 8, z: target.z + (Math.random() - 0.5) * 8 };
+        u.state = 'attack';
+      }
+    }
+  }
+
+  if (aiAttacking) {
+    const alive = aiWave.filter((u) => units.has(u.id));
+    if (alive.length < 2) {
+      aiAttacking = false;
+      aiWave = [];
+    } else {
+      const target = nearestEnemyBuilding(aiId);
+      if (target) {
+        for (const u of alive) {
+          if (!u.target) u.target = { x: target.x + (Math.random() - 0.5) * 10, z: target.z + (Math.random() - 0.5) * 10 };
+        }
+      }
+    }
+  }
+}
+
+/* -------------------------------------------------------------- déplacements */
+
+function lerpAngle(a, b, t) {
+  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + d * t;
+}
+
+function updateUnits(dt) {
+  for (const u of units.values()) {
+    if (!isLocal(u.owner)) {
+      const k = 1 - Math.exp(-dt * 14);
+      u.mesh.position.lerp(u.netPos, k);
+      u.mesh.rotation.y = lerpAngle(u.mesh.rotation.y, u.netRot, k);
+      u.x = u.mesh.position.x;
+      u.z = u.mesh.position.z;
+      continue;
+    }
+
+    if (u.def.role === 'récolte') updateCollector(u, dt);
+
+    if (u.target) {
+      const dx = u.target.x - u.x;
+      const dz = u.target.z - u.z;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist < 0.4) {
+        u.target = null;
+        if (u.state === 'attack') u.state = 'idle';
+      } else {
+        const step = Math.min(dist, u.def.speed * dt);
+        u.x += (dx / dist) * step;
+        u.z += (dz / dist) * step;
+        u.ry = lerpAngle(u.ry, Math.atan2(dx, dz), 1 - Math.exp(-dt * 10));
+      }
+    }
+
+    u.x = THREE.MathUtils.clamp(u.x, -48, 48);
+    u.z = THREE.MathUtils.clamp(u.z, -48, 48);
+    u.mesh.position.set(u.x, 0, u.z);
+    u.mesh.rotation.y = u.ry;
+
+    updateCombat(u, dt);
+  }
+}
+
+function updateBuildings(dt) {
+  for (const b of buildings.values()) {
+    if (!isLocal(b.owner)) continue;
+    updateConstruction(b, dt);
+    updateProduction(b, dt);
+  }
 }
 
 /* ------------------------------------------------------------------- ordres */
@@ -383,11 +1426,10 @@ function formation(center, count) {
   for (let i = 0; i < count; i++) {
     const c = i % cols;
     const r = Math.floor(i / cols);
-    out.push(new THREE.Vector3(
-      center.x + (c - (cols - 1) / 2) * spacing,
-      0,
-      center.z + (r - (rows - 1) / 2) * spacing
-    ));
+    out.push({
+      x: center.x + (c - (cols - 1) / 2) * spacing,
+      z: center.z + (r - (rows - 1) / 2) * spacing
+    });
   }
   return out;
 }
@@ -397,13 +1439,16 @@ function issueMoveOrder(e) {
   const point = groundPoint(e.clientX, e.clientY);
   if (!point) return;
 
-  const ids = [...selected];
-  const targets = formation(point, ids.length);
+  const ids = [...selected].filter((id) => units.has(id));
+  if (!ids.length) return;
 
+  const targets = formation(point, ids.length);
   ids.forEach((id, i) => {
-    const unit = units.get(id);
-    if (!unit || unit.owner !== myId) return;
-    unit.target = targets[i];
+    const u = units.get(id);
+    if (!u || u.owner !== myId) return;
+    u.target = targets[i];
+    u.state = 'move';
+    u.buildTarget = null;
   });
 
   addMarker(point.x, point.z);
@@ -432,155 +1477,75 @@ function updateMarkers(dt) {
   }
 }
 
-/* ------------------------------------------------------------------- unités */
-
-function colorOf(ownerId) {
-  const p = players.find((x) => x.id === ownerId);
-  return p ? p.color : '#8a94a6';
-}
-
-function addUnit({ id, type, owner, x, z, ry = 0 }) {
-  if (units.has(id)) return units.get(id);
-
-  const spec = UNIT_SPECS[type] || UNIT_SPECS.tank;
-  const mesh = createUnit(type, colorOf(owner));
-  mesh.position.set(x, 0, z);
-  mesh.rotation.y = ry;
-  mesh.userData.unitId = id;
-
-  const ring = createSelectionRing(0x8ef7b0);
-  ring.scale.setScalar(spec.radius * 1.2);
-  ring.visible = false;
-  mesh.add(ring);
-
-  scene.add(mesh);
-
-  const unit = {
-    id, type, owner, mesh, ring, spec,
-    speed: spec.speed,
-    target: null,
-    netPos: new THREE.Vector3(x, 0, z),
-    netRot: ry
-  };
-  units.set(id, unit);
-  return unit;
-}
-
-function spawnPlayerUnits(player, index) {
-  const sp = SPAWNS[index % SPAWNS.length];
-  const face = Math.atan2(-sp.x, -sp.z);
-
-  addUnit({ id: `${player.id}:cc`, type: 'cc', owner: player.id, x: sp.x, z: sp.z, ry: face });
-
-  for (let i = 0; i < 2; i++) {
-    addUnit({
-      id: `${player.id}:tank:${i}`,
-      type: 'tank',
-      owner: player.id,
-      x: sp.x + (i === 0 ? -5 : 5),
-      z: sp.z + 7,
-      ry: face
-    });
-  }
-}
-
-function spawnDozer() {
-  const cc = [...units.values()].find((u) => u.owner === myId && u.type === 'cc');
-  if (!cc) return;
-
-  const id = `${myId}:dozer:${Date.now().toString(36)}`;
-  addUnit({
-    id,
-    type: 'dozer',
-    owner: myId,
-    x: cc.mesh.position.x + 6,
-    z: cc.mesh.position.z + 6,
-    ry: 0
-  });
-  broadcastState();
-  toast('Bulldozer sorti du centre de commandement.');
-}
-
-function lerpAngle(a, b, t) {
-  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
-  return a + d * t;
-}
-
-function updateUnits(dt) {
-  for (const unit of units.values()) {
-    // Unités distantes : interpolation vers la dernière transformée reçue
-    if (unit.owner !== myId) {
-      const k = 1 - Math.exp(-dt * 14);
-      unit.mesh.position.lerp(unit.netPos, k);
-      unit.mesh.rotation.y = lerpAngle(unit.mesh.rotation.y, unit.netRot, k);
-      continue;
-    }
-
-    if (!unit.target) continue;
-
-    const dx = unit.target.x - unit.mesh.position.x;
-    const dz = unit.target.z - unit.mesh.position.z;
-    const dist = Math.hypot(dx, dz);
-
-    if (dist < 0.25) {
-      unit.target = null;
-      continue;
-    }
-
-    const step = Math.min(dist, unit.speed * dt);
-    unit.mesh.position.x += (dx / dist) * step;
-    unit.mesh.position.z += (dz / dist) * step;
-    unit.mesh.rotation.y = lerpAngle(unit.mesh.rotation.y, Math.atan2(dx, dz), 1 - Math.exp(-dt * 10));
-  }
-}
-
-function updateSpinners(dt) {
-  for (const unit of units.values()) {
-    const spin = unit.mesh.userData.spin;
-    if (spin) spin.rotation.y += dt * 1.1;
-  }
-}
-
 /* -------------------------------------------------------------- synchronisation */
 
 const r2 = (n) => Math.round(n * 100) / 100;
+let syncAcc = 0;
 
 function broadcastState() {
   if (!net.inGame) return;
-  const payload = [];
-  for (const unit of units.values()) {
-    if (unit.owner !== myId) continue;
-    payload.push([
-      unit.id,
-      r2(unit.mesh.position.x),
-      r2(unit.mesh.position.z),
-      r2(unit.mesh.rotation.y),
-      unit.type,
-      unit.owner
-    ]);
+  const e = [];
+
+  for (const u of units.values()) {
+    if (!isLocal(u.owner)) continue;
+    e.push([u.id, 0, u.type, u.owner, r2(u.x), r2(u.z), r2(u.ry), Math.round(u.hp), u.maxHp, 1, 1]);
   }
-  if (payload.length) net.sendUnits(payload);
+  for (const b of buildings.values()) {
+    if (!isLocal(b.owner)) continue;
+    e.push([b.id, 1, b.type, b.owner, r2(b.x), r2(b.z), 0, Math.round(b.hp), b.maxHp, r2(b.progress), b.built ? 1 : 0]);
+  }
+
+  if (e.length) net.sendEnts({ e });
 }
 
-function onRemoteUnits(list) {
-  for (const entry of list) {
-    if (!Array.isArray(entry) || entry.length < 6) continue;
-    const [id, x, z, ry, type, owner] = entry;
-    if (owner === myId) continue;
+function onRemoteEnts(data) {
+  const now = performance.now();
+  for (const row of data.e) {
+    if (!Array.isArray(row) || row.length < 11) continue;
+    const [id, kind, type, owner, x, z, ry, hp, maxHp, progress, built] = row;
+    if (isLocal(owner)) continue;
 
-    let unit = units.get(id);
-    if (!unit) unit = addUnit({ id, type, owner, x, z, ry });
+    if (kind === 0) {
+      let u = units.get(id);
+      if (!u) u = addUnit({ id, type, owner, x, z, ry, hp });
+      u.netPos.set(x, 0, z);
+      u.netRot = ry;
+      u.hp = hp;
+      u.seenAt = now;
+    } else {
+      let b = buildings.get(id);
+      if (!b) b = addBuilding({ id, type, owner, x, z, progress, hp });
+      b.hp = hp;
+      b.progress = progress;
+      b.built = !!built;
+      applyBuildVisual(b);
+      b.seenAt = now;
+    }
+  }
+}
 
-    unit.netPos.set(x, 0, z);
-    unit.netRot = ry;
+let matchStart = 0;
+
+function sweepRemote() {
+  const now = performance.now();
+  if (now - matchStart < 6000) return;
+  for (const [id, u] of units) {
+    if (isLocal(u.owner)) continue;
+    if (now - u.seenAt > 2500) removeEntity(id);
+  }
+  for (const [id, b] of buildings) {
+    if (isLocal(b.owner)) continue;
+    if (now - b.seenAt > 2500) removeEntity(id);
   }
 }
 
 /* ------------------------------------------------------------------- partie */
 
-function beginMatch(roster, seed) {
-  players = roster;
+function beginMatch(roster, cfg) {
+  players = roster.slice();
+  settings = Object.assign({ money: 5000, fog: true, ai: 'none' }, cfg || {});
   myId = net.selfId;
+  isHost = !!(net.myRoom && net.myRoom.isHost);
   mode = 'game';
 
   $('lobby').classList.add('hidden');
@@ -590,39 +1555,74 @@ function beginMatch(roster, seed) {
   const me = players.find((p) => p.id === myId) || players[0];
   if (me) {
     $('hud-name').textContent = me.name;
-    $('hud-faction').textContent = (FACTIONS[me.faction] || FACTIONS.usa).name;
+    $('hud-faction').textContent = factionOf(me.faction).name;
     $('hud-dot').style.background = me.color;
   }
 
-  players.forEach((p, i) => spawnPlayerUnits(p, i));
+  for (const def of CRYSTAL_FIELDS) {
+    const group = createCrystalField(def);
+    scene.add(group);
+    fields.set(def.id, { def, group, remaining: def.value, alive: def.crystals, regrowT: 0 });
+  }
+
+  if (settings.ai !== 'none' && isHost) {
+    aiId = `ai:${net.selfId}`;
+    aiMoney = settings.money * DIFFICULTY[settings.ai].money;
+  }
+
+  players.forEach((p, i) => spawnBase(p, i));
+
+  money = settings.money;
 
   const myIndex = Math.max(0, players.findIndex((p) => p.id === myId));
   const sp = SPAWNS[myIndex % SPAWNS.length];
   cam.focus.set(sp.x, 0, sp.z);
   cam.dist = cam.targetDist = 48;
 
+  matchStart = performance.now();
+  revealStartArea();
   net.enterGame(net.myRoom ? net.myRoom.code : 'solo');
-  updateSelectionPanel();
-  toast(`Partie lancée (graine ${seed}). Bonne chance, commandant.`);
+  recomputeEnergy();
+  updateHud();
+  refreshSelection();
+  toast(`Partie lancée — ${settings.money.toLocaleString('fr-FR')} $ de départ.`);
+}
+
+function spawnBase(player, index) {
+  const sp = SPAWNS[index % SPAWNS.length];
+  const face = Math.atan2(-sp.x, -sp.z);
+  const faction = factionOf(player.faction);
+
+  addBuilding({ id: `${player.id}:cc`, type: 'cc', owner: player.id, x: sp.x, z: sp.z, progress: 1 });
+
+  const bx = sp.x + Math.sin(face) * 6;
+  const bz = sp.z + Math.cos(face) * 6;
+  const builderType = Object.keys(faction.units).find((k) => faction.units[k].role === 'constructeur');
+  addUnit({
+    id: `${player.id}:builder`,
+    type: builderType,
+    owner: player.id,
+    x: bx,
+    z: bz,
+    ry: face
+  });
 }
 
 function backToLobby() {
   mode = 'lobby';
   net.leaveGame();
 
-  for (const unit of units.values()) {
-    scene.remove(unit.mesh);
-    unit.mesh.traverse((o) => {
-      if (o.isMesh) {
-        o.geometry.dispose();
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
-      }
-    });
-  }
+  for (const id of [...units.keys()]) removeEntity(id);
+  for (const id of [...buildings.keys()]) removeEntity(id);
+  for (const f of fields.values()) { scene.remove(f.group); disposeTree(f.group); }
+  fields.clear();
   units.clear();
+  buildings.clear();
   selected.clear();
   players = [];
+  aiId = null;
+  aiWave = [];
+  aiAttacking = false;
 
   for (const m of markers) scene.remove(m);
   markers.length = 0;
@@ -630,28 +1630,7 @@ function backToLobby() {
   $('hud').classList.add('hidden');
   $('waiting').classList.add('hidden');
   $('lobby').classList.remove('hidden');
-  updateSelectionPanel();
-}
-
-/* ---------------------------------------------------------------------- HUD */
-
-function updateHud() {
-  let mine = 0;
-  for (const unit of units.values()) if (unit.owner === myId) mine++;
-  $('hud-units').textContent = `${mine} unité${mine > 1 ? 's' : ''}`;
-  $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
-  $('hud-net').textContent = net.inGame ? 'P2P actif' : 'connexion…';
-  $('hud-net').classList.toggle('ok', net.inGame);
-}
-
-let toastTimer = null;
-function toast(message) {
-  const el = $('toasts');
-  if (!el) return;
-  el.textContent = message;
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3600);
+  refreshSelection();
 }
 
 /* ------------------------------------------------------------------- lobby */
@@ -661,7 +1640,6 @@ function saveProfile() {
   localStorage.setItem('cac.faction', profile.faction);
   localStorage.setItem('cac.color', profile.color);
   localStorage.setItem('cac.colorTouched', profile.colorTouched ? '1' : '0');
-  // Le profil courant est aussi celui envoyé aux autres pairs (création ET join)
   net.profile = { name: profile.name, faction: profile.faction, color: profile.color };
 }
 
@@ -742,7 +1720,8 @@ function showWaiting(room) {
     info.appendChild(name);
 
     const meta = document.createElement('small');
-    meta.textContent = `${(FACTIONS[p.faction] || FACTIONS.usa).name} · ${(FACTIONS[p.faction] || FACTIONS.usa).tagline}`;
+    const f = factionOf(p.faction);
+    meta.textContent = `${f.name} · ${f.tagline}`;
     info.appendChild(meta);
 
     const slot = document.createElement('span');
@@ -763,7 +1742,7 @@ function showWaiting(room) {
   }
 
   $('btn-start').classList.toggle('hidden', !room.isHost);
-  $('btn-start').disabled = room.players.length < 1;
+  $('settings-panel').classList.toggle('hidden', !room.isHost);
 }
 
 function bindLobby() {
@@ -811,9 +1790,28 @@ function bindLobby() {
     if (e.key === 'Enter') $('btn-join-code').click();
   });
 
-  $('btn-start').addEventListener('click', () => net.startGame());
+  $('btn-start').addEventListener('click', () => {
+    const s = readSettings();
+    // L'IA doit figurer dans le roster envoyé à tous les clients
+    if (s.ai !== 'none' && net.myRoom && !net.myRoom.players.some((p) => p.isAI)) {
+      const used = new Set(net.myRoom.players.map((p) => p.faction));
+      const f = ['eurasia', 'shadow', 'atlantic'].find((x) => !used.has(x)) || 'eurasia';
+      net.myRoom.players.push({
+        id: `ai:${net.selfId}`,
+        name: `IA ${DIFFICULTY[s.ai].label}`,
+        faction: f,
+        color: '#ef4444',
+        isAI: true
+      });
+    }
+    net.startGame(s);
+  });
 
-  // Choix de la stratégie de signalisation (rechargement avec ?net=)
+  $('btn-leave').addEventListener('click', () => {
+    net.leaveRoom();
+    backToLobby();
+  });
+
   const netSelect = $('in-net');
   const currentNet = new URLSearchParams(location.search).get('net') === 'torrent' ? 'torrent' : 'mqtt';
   netSelect.value = currentNet;
@@ -824,13 +1822,16 @@ function bindLobby() {
     location.href = url.toString();
   });
 
-  $('btn-leave').addEventListener('click', () => {
-    net.leaveRoom();
-    backToLobby();
-  });
-
   renderProfile();
   saveProfile();
+}
+
+function readSettings() {
+  return {
+    money: parseInt($('set-money').value, 10) || 5000,
+    fog: $('set-fog').checked,
+    ai: $('set-ai').value
+  };
 }
 
 function createRoom(isPrivate) {
@@ -839,15 +1840,16 @@ function createRoom(isPrivate) {
     $('in-name').focus();
     return;
   }
-  net.profile = {
-    name: profile.name,
-    faction: profile.faction,
-    color: profile.color
-  };
+  net.profile = { name: profile.name, faction: profile.faction, color: profile.color };
   net.createRoom(net.profile, isPrivate);
 }
 
 /* ------------------------------------------------------------------- boucle */
+
+let hudAcc = 0;
+let fogAcc = 0;
+let mmAcc = 0;
+let sweepAcc = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -857,23 +1859,27 @@ function animate() {
   updateCamera(dt);
 
   if (mode === 'game') {
+    updateBuildings(dt);
     updateUnits(dt);
+    updateFields(dt);
     updateMarkers(dt);
-    updateSpinners(dt);
+    updateTracers(dt);
+    updateAI(dt);
 
     syncAcc += dt;
-    if (syncAcc >= 0.1) {
-      syncAcc = 0;
-      broadcastState();
-    }
+    if (syncAcc >= 0.1) { syncAcc = 0; broadcastState(); }
+
+    fogAcc += dt;
+    if (fogAcc >= 0.2) { fogAcc = 0; updateFog(); updateVisibility(); }
+
+    mmAcc += dt;
+    if (mmAcc >= 0.15) { mmAcc = 0; drawMinimap(); }
 
     hudAcc += dt;
-    if (hudAcc >= 0.25) {
-      hudAcc = 0;
-      updateHud();
-    }
-  } else {
-    updateSpinners(dt);
+    if (hudAcc >= 0.25) { hudAcc = 0; updateHud(); }
+
+    sweepAcc += dt;
+    if (sweepAcc >= 1) { sweepAcc = 0; sweepRemote(); }
   }
 
   renderer.render(scene, camera);
@@ -883,20 +1889,24 @@ function animate() {
 
 async function boot() {
   setupThree();
+  setupFog();
+  setupMinimap();
   setupInput();
   bindLobby();
 
   net.on('rooms', renderRooms);
   net.on('roster', showWaiting);
-  net.on('start', (data) => beginMatch(data.players, data.seed));
-  net.on('units', onRemoteUnits);
+  net.on('start', (data) => beginMatch(data.players, data.settings));
+  net.on('ents', onRemoteEnts);
   net.on('order', (data) => addMarker(data.x, data.z));
+  net.on('harvest', (data) => applyHarvest(data.field, data.amount));
+  net.on('hit', (data) => {
+    const target = getEntity(data.target);
+    if (target && isLocal(target.owner)) applyDamage(target, data.dmg);
+  });
   net.on('gamePeers', () => updateHud());
   net.on('joinFailed', (msg) => toast(msg));
-  net.on('closed', (msg) => {
-    toast(msg);
-    backToLobby();
-  });
+  net.on('closed', (msg) => { toast(msg); backToLobby(); });
 
   animate();
 
@@ -915,10 +1925,14 @@ async function boot() {
 window.CAC = {
   net,
   units,
+  buildings,
+  fields,
   cam,
   get selected() { return [...selected]; },
   get players() { return players; },
-  get scene() { return scene; }
+  get money() { return money; },
+  get scene() { return scene; },
+  get settings() { return settings; }
 };
 
 boot();

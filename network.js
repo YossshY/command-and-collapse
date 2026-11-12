@@ -35,7 +35,7 @@ export class Network {
     this.pending = null;
     this.started = false;
     this.inGame = false;
-    this.profile = { name: 'Joueur', faction: 'usa', color: '#3b82f6' };
+    this.profile = { name: 'Joueur', faction: 'atlantic', color: '#3b82f6' };
     this._timers = [];
   }
 
@@ -123,7 +123,7 @@ export class Network {
         this.myRoom.players.push({
           id: peerId,
           name: String(p.name || 'Joueur').slice(0, 16),
-          faction: String(p.faction || 'usa'),
+          faction: String(p.faction || 'atlantic'),
           color: String(p.color || '#3b82f6')
         });
       }
@@ -316,13 +316,17 @@ export class Network {
     this.started = false;
   }
 
-  /** L'hôte lance la partie : tout le monde bascule sur l'arène. */
-  startGame() {
+  /**
+   * L'hôte lance la partie : tout le monde bascule sur l'arène.
+   * @param {object} settings paramètres de difficulté (argent, brouillard, IA…)
+   */
+  startGame(settings = {}) {
     if (!this.myRoom || !this.myRoom.isHost) return;
     const data = {
       code: this.myRoom.code,
       players: this.myRoom.players,
-      seed: Math.floor(Math.random() * 1e9)
+      seed: Math.floor(Math.random() * 1e9),
+      settings
     };
     this.started = true;
     this.act.start.send(data);
@@ -339,13 +343,24 @@ export class Network {
       const [send, recv] = this.game.makeAction(name);
       return { send, recv };
     };
-    this.gact = { units: mk('units'), order: mk('order') };
+    this.gact = {
+      ents: mk('ents'),      // instantané des entités possédées
+      order: mk('order'),    // marqueur d'ordre de déplacement
+      hit: mk('hit'),        // dégâts infligés à une entité distante
+      harvest: mk('harvest') // ponction sur un champ de cristaux
+    };
 
-    this.gact.units.recv((arr) => {
-      if (Array.isArray(arr)) this.emit('units', arr);
+    this.gact.ents.recv((data) => {
+      if (data && Array.isArray(data.e)) this.emit('ents', data);
     });
     this.gact.order.recv((data) => {
       if (data && typeof data.x === 'number') this.emit('order', data);
+    });
+    this.gact.hit.recv((data) => {
+      if (data && data.target) this.emit('hit', data);
+    });
+    this.gact.harvest.recv((data) => {
+      if (data && data.field) this.emit('harvest', data);
     });
 
     this.game.onPeerJoin(() => this.emit('gamePeers', this.gamePeerCount()));
@@ -364,12 +379,20 @@ export class Network {
     }
   }
 
-  sendUnits(payload) {
-    if (this.gact.units) this.gact.units.send(payload);
+  sendEnts(payload) {
+    if (this.gact.ents) this.gact.ents.send(payload);
   }
 
   sendOrder(payload) {
     if (this.gact.order) this.gact.order.send(payload);
+  }
+
+  sendHit(payload) {
+    if (this.gact.hit) this.gact.hit.send(payload);
+  }
+
+  sendHarvest(payload) {
+    if (this.gact.harvest) this.gact.harvest.send(payload);
   }
 
   /* ------------------------------------------------------------------ compteurs */
