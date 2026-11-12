@@ -353,6 +353,44 @@ Elle n'est proposée qu'en **escarmouche contre l'IA** (`settings.ai !== 'none'`
 et aucun autre joueur humain connecté) : en P2P, mettre en pause pour soi
 désynchroniserait les autres clients.
 
+## 15. Modes d'unité (IA façon Generals)
+
+Chaque unité porte un **mode explicite** qui pilote son déplacement, calqué sur
+l'enum d'`AIUpdate.cpp` de Generals. Le combat ne décide plus du mouvement :
+il ouvre simplement le feu sur ce qui est à portée.
+
+| Mode | Comportement |
+|---|---|
+| `guard` | tient sa position, tire sur ce qui entre à portée, **ne poursuit pas** |
+| `guardRetaliate` | riposte avec une laisse (revient à son poste ensuite) |
+| `moveTo` | va au point, puis passe en garde sur place |
+| `attackMove` | avance vers le point en engageant tout sur son passage, reprend ensuite |
+| `attackObject` | poursuit la cible désignée, s'arrête à portée de tir, s'arrête à sa mort |
+
+**Règles clés :**
+
+- Une unité **ne monte jamais sur sa cible** : `stopDistance = portée × 0.8`.
+  C'était le bug « il continue jusqu'à sa cible ».
+- Une unité touchée en `guard` passe en `guardRetaliate` : elle riposte puis
+  revient à son poste, au lieu de rester passive ou de courir partout.
+- Le collecteur garde sa machine à états (`toField` / `harvesting` /
+  `toRefinery`) : un ordre manuel le bascule en `moveTo`, et il **reprend son
+  cycle tout seul** à l'arrivée.
+
+**Commandes** (A et S sont pris par la caméra ZQSD) :
+
+| Touche | Effet |
+|---|---|
+| Clic droit sur le sol | déplacement (`moveTo`) |
+| Clic droit sur un ennemi | assaut (`attackObject`) |
+| <kbd>X</kbd> puis clic | attaque-mobile |
+| <kbd>C</kbd> | halte (garde sur place) |
+| <kbd>H</kbd> | garde explicite |
+
+**Aéronefs** : altitude de croisière à 9 unités avec ombre portée au sol,
+décollage et atterrissage lissés. Sans ordre et loin de leur base ils y
+retournent, puis se posent (y ≈ 1,4) jusqu'au prochain ordre.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :
@@ -366,6 +404,17 @@ CAC.players      // roster
 CAC.money        // trésorerie locale
 CAC.settings     // paramètres de la partie
 CAC.audio        // moteur audio (ctx, volumes, séquenceur)
+CAC.debug        // select · attack · move · spawn · money · screenOf
+```
+
+`CAC.debug` reproduit exactement ce que font la souris et le clavier, ce qui
+permet de tester une mécanique sans jouer 10 minutes :
+
+```js
+const id = CAC.debug.spawn('paladin', -120, -120);   // unité instantanée
+CAC.debug.select([id]);                              // sélection
+CAC.debug.attack(cibleId);                           // ordre d'assaut
+CAC.debug.move(x, z);                                // ordre de déplacement
 ```
 
 ## Lancer en local

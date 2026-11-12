@@ -67,6 +67,7 @@ const keys = new Set();
 const pointer = { x: 0, y: 0, inside: false };
 const drag = { active: false, startX: 0, startY: 0, moved: false };
 let placement = null;   // { type, def, ghost, valid }
+let pendingCommand = null;   // 'attackMove' en attente d'un clic
 
 function setupThree() {
   const canvas = $('scene');
@@ -239,8 +240,33 @@ function setupInput() {
 
     keys.add(e.code);
     if (e.code === 'Escape') {
-      if (placement) cancelPlacement();
+      if (pendingCommand) { pendingCommand = null; toast('Ordre annulé.'); }
+      else if (placement) cancelPlacement();
       else clearSelection();
+    }
+
+    // Ordres tactiques (X/C/H : A et S sont pris par la caméra ZQSD)
+    if (mode === 'game' && !placement) {
+      if (e.code === 'KeyX') {
+        if (selected.size) { pendingCommand = 'attackMove'; toast('Attaque-mobile : cliquez une destination.'); }
+        return;
+      }
+      if (e.code === 'KeyC') {
+        for (const id of selected) {
+          const u = units.get(id);
+          if (u && u.owner === myId) orderStop(u);
+        }
+        if (selected.size) toast('Halte.');
+        return;
+      }
+      if (e.code === 'KeyH') {
+        for (const id of selected) {
+          const u = units.get(id);
+          if (u && u.owner === myId) { u.mode = MODE.GUARD; u.home = { x: u.x, z: u.z }; u.target = null; }
+        }
+        if (selected.size) toast('Garde sur place.');
+        return;
+      }
     }
 
     if (mode === 'game' && /^Digit[1-9]$/.test(e.code)) {
@@ -272,6 +298,7 @@ function setupInput() {
     if (mode !== 'game') return;
 
     if (e.button === 0) {
+      if (pendingCommand) { issuePendingCommand(e.clientX, e.clientY); return; }
       if (placement) {
         tryPlace(e.clientX, e.clientY);
         return;
@@ -495,8 +522,23 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
   mesh.rotation.y = ry;
   mesh.userData.entityId = id;
 
+  const isAir = def.shape === 'aircraft';
+  const alt = isAir ? 9 : 0;
+
   const ring = makeRing(def.shape === 'infantry' || def.shape === 'infantry-at' ? 1.6 : 2.2, 0x8ef7b0);
+  ring.position.y = -alt + 0.15;
   mesh.add(ring);
+
+  // Avions : ombre portée au sol pour garder la lisibilité
+  if (isAir) {
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(1.7, 18),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = -alt + 0.07;
+    mesh.add(shadow);
+  }
 
   const small = def.shape === 'infantry' || def.shape === 'infantry-at';
   const barW = small ? 1.25 : 1.9;
@@ -520,6 +562,8 @@ function addUnit({ id, type, owner, x, z, ry = 0, hp = null }) {
 
   const unit = {
     id, kind: 'unit', type, owner, faction, def, mesh, ring, bar, carryBar,
+    alt, y: isAir ? 1.4 : 0, landed: isAir,
+    mode: MODE.GUARD, home: { x, z }, dest: null, orderTarget: null,
     x, z, ry,
     hp: hp == null ? def.hp : hp,
     maxHp: def.hp,
@@ -772,7 +816,7 @@ function spawnFromBuilding(b, type, free) {
   const id = `${b.owner}:u${++entitySeq}`;
   const u = addUnit({ id, type, owner: b.owner, x, z, ry: Math.atan2(-Math.cos(a), -Math.sin(a)) });
 
-  if (b.rally) u.target = { x: b.rally.x, z: b.rally.z };
+  if (b.rally) orderMove(u, b.rally.x, b.rally.z, false);
   if (free && b.owner === myId) toast(`${def.name} livré.`);
   return u;
 }
@@ -803,6 +847,12 @@ function nearestRefinery(owner, x, z) {
 }
 
 function updateCollector(u, dt) {
+  // Ordre manuel en cours : on attend l'arrivée avant de reprendre le cycle
+  if (u.state === 'move') {
+    if (!u.target) { u.state = 'idle'; u.fieldId = null; }
+    return;
+  }
+
   if (u.state === 'idle') {
     const f = nearestField(u.x, u.z);
     if (!f) return;
@@ -913,14 +963,20 @@ function updateCombat(u, dt) {
   u.cd -= dt;
   if (u.cd > 0) return;
 
-  const target = findTarget(u);
+  // La cible désignée à la main passe avant l'acquisition automatique
+  let target = null;
+  if (u.orderTarget) {
+    const t = getEntity(u.orderTarget);
+    if (t && Math.hypot(t.x - u.x, t.z - u.z) <= (u.def.range || 0)) target = t;
+  }
+  if (!target) target = findTarget(u);
   if (!target) return;
 
   u.cd = u.def.cd;
   u.ry = Math.atan2(target.x - u.x, target.z - u.z);
   u.mesh.rotation.y = u.ry;
 
-  spawnTracer(u, target);
+  spawnTracer(u, target, u.alt ? u.alt + 1 : 1.2);
   if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
 
   if (isLocal(target.owner)) {
@@ -959,6 +1015,13 @@ function updateTracers(dt) {
 
 function applyDamage(entity, dmg) {
   entity.hp -= dmg;
+
+  // Une unité en garde riposte (poursuite limitée) au lieu de rester passive
+  if (entity.hp > 0 && entity.kind === 'unit' && entity.mode === MODE.GUARD) {
+    entity.mode = MODE.GUARD_RETALIATE;
+    entity.home = { x: entity.x, z: entity.z };
+  }
+
   if (entity.hp <= 0) {
     if (entity.kind === 'unit' && entity.def.suicide) {
       for (const e of [...units.values(), ...buildings.values()]) {
@@ -1277,8 +1340,10 @@ function singleEntityHtml(e) {
     if (e.def.role) rows.push(['Rôle', e.def.role]);
     if (e.def.role === 'récolte') {
       rows.push(['Cargaison', `${Math.round(e.carry)} / ${e.carryMax} $`]);
+      rows.push(['État', STATE_LABEL[e.state] || e.state]);
+    } else {
+      rows.push(['Ordre', MODE_LABEL[e.mode] || e.mode]);
     }
-    rows.push(['État', STATE_LABEL[e.state] || e.state]);
   } else {
     if (e.def.energy) rows.push(['Énergie', `${e.def.energy > 0 ? '+' : ''}${e.def.energy} ⚡`]);
     if (!e.built) rows.push(['Chantier', `${Math.round(e.progress * 100)} %`]);
@@ -1852,8 +1917,7 @@ function updateAI(dt) {
     const target = nearestEnemyBuilding(aiId);
     if (target) {
       for (const u of army) {
-        u.target = { x: target.x + (Math.random() - 0.5) * 8, z: target.z + (Math.random() - 0.5) * 8 };
-        u.state = 'attack';
+        orderMove(u, target.x + (Math.random() - 0.5) * 8, target.z + (Math.random() - 0.5) * 8, true);
       }
     }
   }
@@ -1867,7 +1931,10 @@ function updateAI(dt) {
       const target = nearestEnemyBuilding(aiId);
       if (target) {
         for (const u of alive) {
-          if (!u.target) u.target = { x: target.x + (Math.random() - 0.5) * 10, z: target.z + (Math.random() - 0.5) * 10 };
+          // Une unité parvenue à destination repart en attaque-mobile
+          if (u.mode === MODE.GUARD || u.mode === MODE.IDLE || u.mode === MODE.GUARD_RETALIATE) {
+            orderMove(u, target.x + (Math.random() - 0.5) * 10, target.z + (Math.random() - 0.5) * 10, true);
+          }
         }
       }
     }
@@ -1881,6 +1948,158 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 
+/* --------------------------------------------------------- modes d'unité */
+
+const MODE = {
+  IDLE: 'idle',
+  GUARD: 'guard',
+  GUARD_RETALIATE: 'guardRetaliate',
+  MOVE_TO: 'moveTo',
+  ATTACK_MOVE: 'attackMove',
+  ATTACK_OBJECT: 'attackObject'
+};
+
+const MODE_LABEL = {
+  idle: 'au repos',
+  guard: 'en garde',
+  guardRetaliate: 'garde riposte',
+  moveTo: 'en déplacement',
+  attackMove: 'attaque-mobile',
+  attackObject: 'assaut'
+};
+
+/** Distance d'arrêt devant une cible : on tire, on ne monte pas dessus. */
+function stopDistance(u) {
+  return Math.max(1.4, (u.def.range || 8) * 0.8);
+}
+
+function faceTowards(u, t, dt) {
+  u.ry = lerpAngle(u.ry, Math.atan2(t.x - u.x, t.z - u.z), 1 - Math.exp(-dt * 10));
+}
+
+/** Ordre de déplacement (ou d'attaque-mobile) vers un point. */
+function orderMove(u, x, z, attackMove) {
+  u.target = { x, z };
+  u.dest = { x, z };
+  u.orderTarget = null;
+  u.home = { x, z };
+  u.mode = attackMove ? MODE.ATTACK_MOVE : MODE.MOVE_TO;
+}
+
+/** Ordre d'assaut sur une entité : on la poursuit jusqu'à sa destruction. */
+function orderAttack(u, id) {
+  u.orderTarget = id;
+  u.target = null;
+  u.dest = null;
+  u.mode = MODE.ATTACK_OBJECT;
+}
+
+/** Halte : on tient la position atteinte (garde sur place). */
+function orderStop(u) {
+  u.target = null;
+  u.dest = null;
+  u.orderTarget = null;
+  u.mode = MODE.GUARD;
+  u.home = { x: u.x, z: u.z };
+  if (u.def.role === 'récolte') u.state = 'idle';
+}
+
+/**
+ * Intelligence d'une unité, calquée sur AIUpdate.cpp de Generals :
+ * un MODE explicite pilote le déplacement, le combat ne fait qu'ouvrir le feu
+ * sur ce qui est à portée. Une unité en garde ne poursuit jamais.
+ */
+function updateUnitAI(u, dt) {
+  const range = u.def.range || 8;
+
+  switch (u.mode) {
+    /* -------- Assaut : poursuite jusqu'à portée, puis arrêt et tir */
+    case MODE.ATTACK_OBJECT: {
+      const t = u.orderTarget ? getEntity(u.orderTarget) : null;
+      if (!t) {
+        u.orderTarget = null;
+        u.mode = MODE.GUARD;
+        u.home = { x: u.x, z: u.z };
+        u.target = null;
+        break;
+      }
+      const d = Math.hypot(t.x - u.x, t.z - u.z);
+      if (d > stopDistance(u)) u.target = { x: t.x, z: t.z };
+      else { u.target = null; faceTowards(u, t, dt); }
+      break;
+    }
+
+    /* -------- Attaque-mobile : avance vers le point en engageant */
+    case MODE.ATTACK_MOVE: {
+      const t = findTarget(u, range * 1.5);
+      if (t) {
+        const d = Math.hypot(t.x - u.x, t.z - u.z);
+        if (d > stopDistance(u)) u.target = { x: t.x, z: t.z };
+        else { u.target = null; faceTowards(u, t, dt); }
+        break;
+      }
+      if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 1.2) {
+        u.target = { x: u.dest.x, z: u.dest.z };
+      } else {
+        u.dest = null;
+        u.mode = MODE.GUARD;
+        u.home = { x: u.x, z: u.z };
+        u.target = null;
+      }
+      break;
+    }
+
+    /* -------- Déplacement simple : on arrive puis on garde */
+    case MODE.MOVE_TO: {
+      if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 0.6) {
+        u.target = { x: u.dest.x, z: u.dest.z };
+      } else {
+        u.dest = null;
+        u.mode = MODE.GUARD;
+        u.home = { x: u.x, z: u.z };
+        u.target = null;
+      }
+      break;
+    }
+
+    /* -------- Garde riposte : engage à portée, revient à son poste */
+    case MODE.GUARD_RETALIATE: {
+      const t = findTarget(u, range);
+      if (t) {
+        const d = Math.hypot(t.x - u.x, t.z - u.z);
+        u.target = d > stopDistance(u) ? { x: t.x, z: t.z } : null;
+        if (!u.target) faceTowards(u, t, dt);
+      } else if (u.home && Math.hypot(u.home.x - u.x, u.home.z - u.z) > 2) {
+        u.target = { x: u.home.x, z: u.home.z };
+      } else {
+        u.target = null;
+      }
+      break;
+    }
+
+    /* -------- Garde / repos : aucun déplacement volontaire */
+    default: {
+      u.target = null;
+      break;
+    }
+  }
+
+  // Aéronefs : retour à l'aérodrome et posé quand ils n'ont plus d'ordre
+  if (u.alt) {
+    if (u.mode === MODE.GUARD || u.mode === MODE.IDLE) {
+      if (u.home && Math.hypot(u.home.x - u.x, u.home.z - u.z) > 7) {
+        u.target = { x: u.home.x, z: u.home.z };
+        u.landed = false;
+      } else {
+        u.target = null;
+        u.landed = true;
+      }
+    } else {
+      u.landed = false;
+    }
+  }
+}
+
 function updateUnits(dt) {
   for (const u of units.values()) {
     if (!isLocal(u.owner)) {
@@ -1892,7 +2111,16 @@ function updateUnits(dt) {
       continue;
     }
 
-    if (u.def.role === 'récolte') updateCollector(u, dt);
+    if (u.def.role === 'récolte') {
+      // Le collecteur gère son cycle ; un ordre manuel le met en pause
+      if (u.mode === MODE.MOVE_TO || u.mode === MODE.ATTACK_MOVE || u.mode === MODE.ATTACK_OBJECT) {
+        updateUnitAI(u, dt);
+      } else {
+        updateCollector(u, dt);
+      }
+    } else {
+      updateUnitAI(u, dt);
+    }
 
     if (u.target) {
       const dx = u.target.x - u.x;
@@ -1901,7 +2129,6 @@ function updateUnits(dt) {
 
       if (dist < 0.4) {
         u.target = null;
-        if (u.state === 'attack') u.state = 'idle';
       } else {
         const step = Math.min(dist, u.def.speed * dt);
         u.x += (dx / dist) * step;
@@ -1913,7 +2140,14 @@ function updateUnits(dt) {
     const lim = MAP_SIZE / 2 - 2;
     u.x = THREE.MathUtils.clamp(u.x, -lim, lim);
     u.z = THREE.MathUtils.clamp(u.z, -lim, lim);
-    u.mesh.position.set(u.x, 0, u.z);
+
+    // Altitude lissée : décollage / atterrissage des aéronefs
+    const cruise = u.alt || 0;
+    const wanted = u.landed ? 1.4 : cruise;
+    u.y += (wanted - u.y) * (1 - Math.exp(-dt * 2.2));
+    const bob = u.alt && !u.landed ? Math.sin(performance.now() * 0.0016 + u.x * 0.3) * 0.3 : 0;
+
+    u.mesh.position.set(u.x, u.y + bob, u.z);
     u.mesh.rotation.y = u.ry;
 
     updateCombat(u, dt);
@@ -1974,6 +2208,28 @@ function formation(center, count) {
   return out;
 }
 
+function issuePendingCommand(cx, cy) {
+  const cmd = pendingCommand;
+  pendingCommand = null;
+  if (cmd !== 'attackMove') return;
+
+  const ids = [...selected].filter((id) => units.has(id));
+  if (!ids.length) return;
+
+  const point = groundPoint(cx, cy);
+  if (!point) return;
+
+  const targets = formation(point, ids.length);
+  ids.forEach((id, i) => {
+    const u = units.get(id);
+    if (u && u.owner === myId) orderMove(u, targets[i].x, targets[i].z, true);
+  });
+
+  addMarker(point.x, point.z);
+  audio.sfx('click');
+  toast('Attaque-mobile.');
+}
+
 function issueMoveOrder(e) {
   if (!selected.size) return;
   const point = groundPoint(e.clientX, e.clientY);
@@ -1993,12 +2249,28 @@ function issueMoveOrder(e) {
   const ids = [...selected].filter((id) => units.has(id));
   if (!ids.length) return;
 
+  // Clic droit sur une entité ennemie : ordre d'attaque
+  const hitId = pickEntity(e.clientX, e.clientY);
+  const hit = hitId ? getEntity(hitId) : null;
+
+  if (hit && hit.owner !== myId) {
+    for (const id of ids) {
+      const u = units.get(id);
+      if (!u || u.owner !== myId) continue;
+      orderAttack(u, hit.id);
+      u.buildTarget = null;
+    }
+    addMarker(hit.x, hit.z);
+    audio.sfx('click');
+    toast(`Assaut — ${hit.def.name}.`);
+    return;
+  }
+
   const targets = formation(point, ids.length);
   ids.forEach((id, i) => {
     const u = units.get(id);
     if (!u || u.owner !== myId) return;
-    u.target = targets[i];
-    u.state = 'move';
+    orderMove(u, targets[i].x, targets[i].z, false);
     u.buildTarget = null;
   });
 
@@ -2532,7 +2804,56 @@ window.CAC = {
   get players() { return players; },
   get money() { return money; },
   get scene() { return scene; },
-  get settings() { return settings; }
+  get settings() { return settings; },
+
+  /* Accès de test/debug : reproduit ce que font la souris et le clavier. */
+  debug: {
+    select(ids) {
+      clearSelection();
+      for (const id of ids) {
+        const e = getEntity(id);
+        if (!e) continue;
+        selected.add(id);
+        if (e.ring) e.ring.visible = true;
+      }
+      refreshSelection();
+      return [...selected];
+    },
+    attack(id) {
+      for (const k of selected) {
+        const u = units.get(k);
+        if (u && u.owner === myId) orderAttack(u, id);
+      }
+      return [...selected];
+    },
+    move(x, z) {
+      for (const k of selected) {
+        const u = units.get(k);
+        if (u && u.owner === myId) orderMove(u, x, z, false);
+      }
+      return [...selected];
+    },
+    spawn(type, x, z, owner) {
+      const o = owner || myId;
+      const id = `${o}:dbg${++entitySeq}`;
+      addUnit({ id, type, owner: o, x: x || 0, z: z || 0 });
+      return id;
+    },
+    money(v) {
+      money = v;
+      updateHud();
+      return money;
+    },
+    screenOf(id) {
+      const e = getEntity(id);
+      if (!e) return null;
+      const v = new THREE.Vector3(e.x, (e.alt || 0) + 1, e.z).project(camera);
+      return {
+        x: Math.round((v.x * 0.5 + 0.5) * window.innerWidth),
+        y: Math.round((-v.y * 0.5 + 0.5) * window.innerHeight)
+      };
+    }
+  }
 };
 
 boot();
