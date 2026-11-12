@@ -119,6 +119,17 @@ sur des points de départ opposés (4 coins de la carte).
 
 ---
 
+## Débogage
+
+La console du navigateur expose `window.CAC` :
+
+```js
+CAC.units            // Map id -> unité (mesh, owner, target…)
+CAC.net              // couche réseau (selfId, myRoom, peerCount…)
+CAC.players          // roster de la partie
+CAC.selected         // ids sélectionnés
+```
+
 ## Lancer en local
 
 Les modules ES et l'import map exigent un serveur HTTP (pas de `file://`) :
