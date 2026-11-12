@@ -1059,10 +1059,10 @@ function updateVisibility() {
   }
   // Le décor dépasse du plan de brouillard : on le masque hors vision
   for (const r of decorRocks) {
-    r.visible = isVisibleToMe(r.position.x, r.position.z, 4);
+    r.visible = isVisibleToMe(r.position.x, r.position.z, 0);
   }
   for (const f of fields.values()) {
-    f.group.visible = isVisibleToMe(f.def.x, f.def.z, f.def.radius);
+    f.group.visible = isVisibleToMe(f.def.x, f.def.z, 0);
   }
 }
 
@@ -1933,8 +1933,15 @@ function setupAudioUI() {
   $('btn-close-settings').addEventListener('click', () => $('settings-modal').classList.add('hidden'));
 
   // Politique navigateur : l'audio ne démarre qu'après un geste utilisateur
-  const unlock = () => { audio.init(); window.removeEventListener('pointerdown', unlock); };
+  const unlock = () => {
+    audio.init();
+    window.removeEventListener('pointerdown', unlock);
+    window.removeEventListener('click', unlock);
+    window.removeEventListener('keydown', unlock);
+  };
   window.addEventListener('pointerdown', unlock);
+  window.addEventListener('click', unlock);
+  window.addEventListener('keydown', unlock);
 
   sync();
 }
