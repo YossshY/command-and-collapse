@@ -1126,6 +1126,16 @@ function nearestRefinery(owner, x, z) {
   return best;
 }
 
+/** Point d'accostage d'une raffinerie : sur la face tournée vers le collecteur. */
+function dockPointFor(ref, x, z) {
+  const r = Math.max(ref.def.w, ref.def.d) / 2 + 2.4;
+  let ax = x - ref.x;
+  let az = z - ref.z;
+  let l = Math.hypot(ax, az);
+  if (l < 0.01) { ax = 0; az = 1; l = 1; }
+  return { x: ref.x + (ax / l) * r, z: ref.z + (az / l) * r };
+}
+
 function updateCollector(u, dt) {
   // Ordre manuel en cours : on attend l'arrivée avant de reprendre le cycle
   if (u.state === 'move') {
@@ -1141,6 +1151,7 @@ function updateCollector(u, dt) {
     const a = Math.random() * Math.PI * 2;
     const r = Math.random() * f.def.radius * 0.7;
     u.target = { x: f.def.x + Math.cos(a) * r, z: f.def.z + Math.sin(a) * r };
+    setPath(u, u.target.x, u.target.z);
     return;
   }
 
@@ -1171,15 +1182,29 @@ function updateCollector(u, dt) {
     const ref = nearestRefinery(u.owner, u.x, u.z);
     if (!ref) { u.state = 'idle'; return; }
     u.refineryId = ref.id;
-    u.target = { x: ref.x + (ref.def.w / 2 + 1.5), z: ref.z + (ref.def.d / 2 + 1.5) };
+    u.dock = dockPointFor(ref, u.x, u.z);
+    u.target = { x: u.dock.x, z: u.dock.z };
+    u.dockT = 0;
+    setPath(u, u.dock.x, u.dock.z);
     return;
   }
 
   if (u.state === 'toRefinery') {
     const ref = buildings.get(u.refineryId);
-    if (!ref || !ref.built) { u.state = 'idle'; u.target = null; return; }
-    if (!u.target) { u.state = 'idle'; return; }
-    if (Math.hypot(u.x - u.target.x, u.z - u.target.z) < 1.6) {
+    if (!ref || !ref.built) { u.state = 'idle'; u.target = null; u.path = null; return; }
+    if (!u.dock) u.dock = dockPointFor(ref, u.x, u.z);
+    u.dockT = (u.dockT || 0) + dt;
+
+    // Bloqué à l'approche : on recalcule un point d'accostage depuis la
+    // position actuelle et on refait le chemin (au plus toutes les 4 s).
+    if (u.dockT > 4) {
+      u.dockT = 0;
+      u.dock = dockPointFor(ref, u.x, u.z);
+      setPath(u, u.dock.x, u.dock.z);
+    }
+    u.target = { x: u.dock.x, z: u.dock.z };
+
+    if (Math.hypot(u.x - u.dock.x, u.z - u.dock.z) < 2.4) {
       if (u.owner === myId) { money += u.carry; audio.sfx('cash'); }
       else if (isHost && u.owner === aiId) aiMoney += u.carry;
       u.carry = 0;
@@ -3058,7 +3083,74 @@ function updateUnitAI(u, dt) {
   }
 }
 
+/**
+ * Évitement local : les unités se repoussent doucement quand elles se
+ * chevauchent. Sans ça, un groupe empilé traverse les bâtiments en bloc.
+ */
+function separateUnits(dt) {
+  const list = [];
+  for (const u of units.values()) if (!u.alt) list.push(u);
+  if (list.length < 2) return;
+
+  const CELL = 4;
+  const grid = new Map();
+  for (const u of list) {
+    const k = `${Math.floor(u.x / CELL)},${Math.floor(u.z / CELL)}`;
+    const bucket = grid.get(k);
+    if (bucket) bucket.push(u); else grid.set(k, [u]);
+  }
+
+  for (const a of list) {
+    if (!isLocal(a.owner)) continue;          // on ne déplace que nos unités
+    const ra = a.def.radius || 1.7;
+    let px = 0;
+    let pz = 0;
+
+    const cx = Math.floor(a.x / CELL);
+    const cz = Math.floor(a.z / CELL);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const bucket = grid.get(`${cx + dx},${cz + dz}`);
+        if (!bucket) continue;
+        for (const b of bucket) {
+          if (b === a) continue;
+          const ddx = a.x - b.x;
+          const ddz = a.z - b.z;
+          const min = ra + (b.def.radius || 1.7);
+          const d2 = ddx * ddx + ddz * ddz;
+          if (d2 > min * min) continue;
+
+          // Superposition exacte : direction stable propre à l'unité
+          if (d2 < 1e-4) {
+            if (a.sepAng === undefined) {
+              let h = 0;
+              for (let k = 0; k < a.id.length; k++) h = (h * 31 + a.id.charCodeAt(k)) % 997;
+              a.sepAng = (h / 997) * Math.PI * 2;
+            }
+            px += Math.cos(a.sepAng) * 0.6;
+            pz += Math.sin(a.sepAng) * 0.6;
+            continue;
+          }
+
+          const d = Math.sqrt(d2);
+          const overlap = (min - d) / min;
+          px += (ddx / d) * overlap;
+          pz += (ddz / d) * overlap;
+        }
+      }
+    }
+
+    if (px || pz) {
+      const k = Math.min(1, dt * 9) * 0.55;
+      a.x = THREE.MathUtils.clamp(a.x + px * k, -MAP_SIZE / 2 + 2, MAP_SIZE / 2 - 2);
+      a.z = THREE.MathUtils.clamp(a.z + pz * k, -MAP_SIZE / 2 + 2, MAP_SIZE / 2 - 2);
+    }
+  }
+}
+
 function updateUnits(dt) {
+  separateUnits(dt);
+
   for (const u of units.values()) {
     if (!isLocal(u.owner)) {
       const k = 1 - Math.exp(-dt * 14);
@@ -3090,6 +3182,8 @@ function updateUnits(dt) {
         setPath(u, u.dest.x, u.dest.z);
       }
     }
+
+    if (u.path && u.path.length && u.target) u.target = pathTarget(u, u.target);
 
     if (u.target) {
       const dx = u.target.x - u.x;
@@ -3138,6 +3232,33 @@ function updateUnits(dt) {
     u.mesh.position.set(u.x, u.y + bob, u.z);
     u.mesh.rotation.y = u.ry;
 
+    // Blocage : une unité qui n'avance plus tente une déviation latérale
+    const wants = u.dest || (u.def.role === 'récolte' ? u.target : null);
+    const ordered = u.mode === MODE.MOVE_TO || u.mode === MODE.ATTACK_MOVE ||
+                    u.state === 'toField' || u.state === 'toRefinery';
+    if (!u.alt && wants && ordered) {
+      const moved = Math.hypot(u.x - (u.px === undefined ? u.x : u.px),
+                               u.z - (u.pz === undefined ? u.z : u.pz));
+      u.stuckT = moved < 0.06 ? (u.stuckT || 0) + dt : 0;
+      if (u.stuckT > 1.4) {
+        u.stuckT = 0;
+        if (navDirty) rebuildNav();
+        const ang = Math.atan2(wants.z - u.z, wants.x - u.x) +
+                    (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2;
+        for (let d = 3; d <= 7; d += 2) {
+          const nx = u.x + Math.cos(ang) * d;
+          const nz = u.z + Math.sin(ang) * d;
+          const c = navCellOf(nx, nz);
+          if (c >= 0 && !navBlocked[c]) {
+            u.path = [{ x: nx, z: nz }, { x: wants.x, z: wants.z }];
+            break;
+          }
+        }
+      }
+      u.px = u.x;
+      u.pz = u.z;
+    }
+
     updateCombat(u, dt);
   }
 }
@@ -3180,6 +3301,28 @@ function updateDefense(b, dt) {
 
 /* ------------------------------------------------------------------- ordres */
 
+/** Attribue à chaque unité la place de formation la plus proche (moins de croisements). */
+function assignFormation(ids, targets) {
+  const free = targets.slice();
+  const out = new Map();
+  const list = ids.map((id) => units.get(id)).filter(Boolean);
+  // les unités les plus proches du centre choisissent en premier
+  const cx = targets.reduce((s, t) => s + t.x, 0) / targets.length;
+  const cz = targets.reduce((s, t) => s + t.z, 0) / targets.length;
+  list.sort((a, b) => Math.hypot(a.x - cx, a.z - cz) - Math.hypot(b.x - cx, b.z - cz));
+
+  for (const u of list) {
+    let bi = 0;
+    let bd = Infinity;
+    for (let i = 0; i < free.length; i++) {
+      const d = Math.hypot(u.x - free[i].x, u.z - free[i].z);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    out.set(u.id, free.splice(bi, 1)[0]);
+  }
+  return out;
+}
+
 function formation(center, count) {
   const cols = Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / cols);
@@ -3208,9 +3351,11 @@ function issuePendingCommand(cx, cy) {
   if (!point) return;
 
   const targets = formation(point, ids.length);
-  ids.forEach((id, i) => {
+  const slots = assignFormation(ids, targets);
+  ids.forEach((id) => {
     const u = units.get(id);
-    if (u && u.owner === myId) orderMove(u, targets[i].x, targets[i].z, true);
+    const s = slots.get(id) || targets[0];
+    if (u && u.owner === myId) orderMove(u, s.x, s.z, true);
   });
 
   addMarker(point.x, point.z);
@@ -3256,10 +3401,12 @@ function issueMoveOrder(e) {
   }
 
   const targets = formation(point, ids.length);
-  ids.forEach((id, i) => {
+  const slots = assignFormation(ids, targets);
+  ids.forEach((id) => {
     const u = units.get(id);
     if (!u || u.owner !== myId) return;
-    orderMove(u, targets[i].x, targets[i].z, false);
+    const s = slots.get(id) || targets[0];
+    orderMove(u, s.x, s.z, false);
     u.buildTarget = null;
   });
 
@@ -3905,6 +4052,24 @@ window.CAC = {
       updateHud();
       return money;
     },
+    /* Applique n pas de séparation locale (tests) */
+    separate(n = 1, dt = 0.033) {
+      for (let i = 0; i < n; i++) separateUnits(dt);
+      return [...units.values()]
+        .filter((u) => u.owner === myId)
+        .map((u) => [Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10]);
+    },
+
+    /* Point d'accostage calculé pour une raffinerie (tests) */
+    dock(refId, x, z) {
+      const r = buildings.get(refId);
+      if (!r) return null;
+      const d = dockPointFor(r, x, z);
+      const cell = navCellOf(d.x, d.z);
+      return { ...d, distCentre: Math.round(Math.hypot(d.x - r.x, d.z - r.z) * 100) / 100,
+               caseBloquee: cell >= 0 && !!navBlocked[cell] };
+    },
+
     /* Cible choisie par l'IA de tir d'une unité (tests) */
     targetOf(id) {
       const u = getEntity(id);
