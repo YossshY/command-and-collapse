@@ -258,11 +258,16 @@ Aucun autre fichier n'a besoin d'être modifié.
 Aucun fichier audio : **tout est synthétisé en direct** avec la Web Audio API
 (`audio.js`), ce qui évite tout problème de licence et garde le jeu autonome.
 
-- **Musique** : boucle ambient/militaire à 84 BPM — nappe d'accords mineurs
-  (Am–F–C–G) en sawtooth filtré, basse, grosse caisse et charleston, séquencés
-  avec un lookahead de 250 ms.
-- **Effets** : sélection, pose de bâtiment, bâtiment terminé, encaissement,
-  erreur de fonds, tir, explosion.
+- **Musique adaptative** (72 BPM, ambient/militaire) : nappes douces, drone,
+  mélodie générée phrase par phrase (pizzicato + écho), réverbération. Six
+  grilles d'accords tirées au hasard toutes les 8 mesures : pas de boucle
+  audible. Au repos, aucune percussion ; un **niveau d'intensité** (0 → 1)
+  monte à chaque tir (+0,05) et explosion (+0,15), puis retombe seul en
+  ~30 s. Il fait entrer tambours, taïko, caisse claire puis roulements.
+- **Effets** : clic, sélection, annulation, pose, bâtiment terminé,
+  encaissement, vente, erreur, tir (2 timbres, hauteur aléatoire, 5 voix
+  max par 120 ms), explosion (3 couches). Un compresseur général évite toute
+  saturation, même avec 12 tirs et 3 explosions simultanés au volume max.
 - **Réglages** : bouton ⚙ dans le lobby et dans le HUD → deux curseurs
   (musique / effets) et deux boutons muet. Les valeurs sont conservées dans
   `localStorage` (`cac.audio`).

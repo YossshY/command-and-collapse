@@ -687,7 +687,7 @@ function sellBuilding(b) {
   if (!b || b.owner !== myId || b.type === 'cc') return;
   money += Math.round(b.def.cost * 0.5);
   removeEntity(b.id);
-  audio.sfx('cash');
+  audio.sfx('sell');
   toast(`${b.def.name} vendu.`);
   refreshSelection();
   updateHud();
@@ -1055,7 +1055,7 @@ function cancelQueued(b, index) {
   const def = unitDef(b.faction, job.type);
   if (def) money += def.cost;
   b.queue.splice(i, 1);
-  audio.sfx('click');
+  audio.sfx('cancel');
   toast(`${def ? def.name : job.type} annulé${def ? ` · +${def.cost} $` : ''}.`);
   updateHud();
   renderBuildBar();
