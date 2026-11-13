@@ -483,13 +483,14 @@ panneau peut se réduire pour laisser la grille défiler.
 
 ## 18. Habillage « Desert Storm »
 
-Le HUD reprend la maquette de référence : bandeau de titre cyan, plaque
+Le HUD reprend la maquette de référence (sans bandeau de titre, retiré à la
+demande) : plaque
 d'argent biseautée, jauge d'énergie verticale, radar cadré et cartes de
 construction à badge de raccourci.
 
 | Élément | Détail |
 |---|---|
-| Bandeau | titre en monospace cyan + mode réseau à droite |
+| Joueur | pastille de connexion, pseudo et faction, en haut à gauche |
 | Argent | plaque à coins coupés (`clip-path`), chiffres 22 px, passe en rouge sous 300 $ |
 | Énergie | `produite/consommée` + jauge verticale segmentée, valeur en % |
 | Radar | cadre à équerres cyan, sol sable, routes des bases, cadre de caméra cyan |

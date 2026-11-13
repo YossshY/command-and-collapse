@@ -1873,37 +1873,10 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 
 /* ---- Barre de titre ---------------------------------------------------- */
 
-.topbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  background: linear-gradient(180deg, #0b1015, #151e26);
-  border-bottom: 1px solid #23414f;
-  font-family: var(--ds-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #63e2f7;
-  text-shadow: 0 0 12px rgba(79, 216, 236, 0.45);
-  z-index: 12;
-}
-
-.topbar-net {
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  color: #4c7f92;
-}
-
 /* ---- Bandeau joueur ---------------------------------------------------- */
 
 .hud-top-left {
-  top: 34px;
+  top: 10px;
 }
 
 .hud-top-left .badge {
@@ -2329,9 +2302,8 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 /* ---- Mobile ------------------------------------------------------------ */
 
 @media (max-width: 900px) {
-  .right-col { width: 196px; top: 28px; gap: 5px; }
-  .topbar { height: 22px; font-size: 9px; }
-  .hud-top-left { top: 28px; }
+  .right-col { width: 196px; top: 6px; gap: 5px; }
+  .hud-top-left { top: 6px; }
   .money-value strong { font-size: 16px; }
   .money-value { padding: 3px 8px 0; }
   .power-line { padding: 0 8px 4px; font-size: 8px; }
@@ -2352,8 +2324,7 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 }
 
 @media (max-width: 560px), (max-height: 470px) {
-  .right-col { width: 168px; top: 24px; gap: 4px; }
-  .topbar-title { font-size: 8px; letter-spacing: 0.1em; }
+  .right-col { width: 168px; top: 5px; gap: 4px; }
 
   #minimap { width: 76px; height: 76px; }
   .money-value strong { font-size: 14px; }
@@ -2379,7 +2350,7 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
   grid-template-rows: auto auto minmax(0, 1fr);   /* minmax(0,…) : le panneau ne déborde plus */
   gap: 6px;
   width: 296px;
-  top: 34px;
+  top: 10px;
   right: 10px;
   bottom: 10px;
   overflow: hidden;
@@ -2424,17 +2395,23 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
   grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   padding: 6px 6px 5px;
+  flex: 0 0 auto;          /* sinon la rangée se comprime et coupe les libellés */
 }
 
 .tab {
-  padding: 7px 1px 6px;
-  gap: 4px;
-  font-size: 8.5px;
+  height: auto;                      /* une ancienne règle figeait 28 px : le libellé était rogné */
+  padding: 6px 0 5px;
+  gap: 3px;
+  font-size: 7px;                    /* nom complet sur une ligne en 53 px */
+  line-height: 1.1;
+  letter-spacing: 0;
   color: #86aec4;                    /* libellés lisibles, pas gris sur gris */
   border-radius: 3px;
   border-bottom: 1px solid transparent;
+  overflow: hidden;
 }
 .tab svg { width: 21px; height: 21px; }
+.tab span { white-space: nowrap; }
 .tab:hover { color: #d8f4ff; }
 
 /* Onglet actif : pavé cyan plein, texte et icône sombres (comme la référence) */
@@ -2513,15 +2490,17 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 
 /* ---- Adaptation mobile ---- */
 @media (max-width: 900px) {
-  .right-col { width: 200px; grid-template-columns: 1fr 20px; gap: 4px; top: 28px; right: 6px; bottom: 6px; }
+  .right-col { width: 200px; grid-template-columns: 1fr 20px; gap: 4px; top: 6px; right: 6px; bottom: 6px; }
   .money-plate { min-height: 46px; }
   .money-value { padding: 3px 8px 0; }
   .power-line { padding: 0 8px 4px; }
   .power-col { padding: 3px 2px; }
   .power-col-track { width: 9px; }
   #minimap { width: 100%; height: auto; max-height: 120px; object-fit: contain; }
-  .tab { padding: 3px 1px; gap: 2px; font-size: 6.5px; }
-  .tab svg { width: 14px; height: 14px; }
+  /* Sur téléphone, les libellés ne tiennent pas : on garde les icônes seules */
+  .tab { padding: 5px 1px; gap: 0; }
+  .tab span { display: none; }
+  .tab svg { width: 16px; height: 16px; }
   .build-cell { min-height: 64px; padding: 6px 3px 5px; gap: 2px; }
   .build-cell .bc-icon, .build-cell .bc-icon svg { height: 18px; width: 18px; }
   .build-cell .bc-name { font-size: 7.5px; }

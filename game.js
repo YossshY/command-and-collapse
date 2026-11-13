@@ -1934,11 +1934,12 @@ const HOTKEY = {
 };
 
 const TABS = [
-  ['structures', 'Bâtiments', 'structures', 'Bât.'],
-  ['defense', 'Défense', 'defense', 'Déf.'],
-  ['infantry', 'Infanterie', 'infantry', 'Inf.'],
-  ['vehicles', 'Véhicules', 'tank', 'Véh.'],
-  ['air', 'Aviation', 'aircraft', 'Air']
+  // Libellés complets : la colonne est assez large pour eux (voir .tab)
+  ['structures', 'Bâtiments', 'structures', 'BÂTIMENTS'],
+  ['defense', 'Défense', 'defense', 'DÉFENSE'],
+  ['infantry', 'Infanterie', 'infantry', 'INFANTERIE'],
+  ['vehicles', 'Véhicules', 'tank', 'VÉHICULES'],
+  ['air', 'Aviation', 'aircraft', 'AVIATION']
 ];
 
 function unitCat(def) {
