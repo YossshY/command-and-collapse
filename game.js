@@ -1601,6 +1601,26 @@ function updateFog() {
   fogTex.needsUpdate = true;
 }
 
+/**
+ * Remet le brouillard à zéro pour une nouvelle partie : mémoire d'exploration
+ * (grille logique + canvas qui alimente le rendu et la minicarte) et zone visible.
+ */
+function resetFog() {
+  exploredGrid.fill(0);
+  for (const ctx of [exploredCtx, visCtx, fogCtx]) {
+    if (!ctx) continue;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, FOG_RES, FOG_RES);
+  }
+  if (fogCtx) {
+    fogCtx.fillStyle = 'rgba(5,7,10,0.93)';
+    fogCtx.fillRect(0, 0, FOG_RES, FOG_RES);
+    fogTex.needsUpdate = true;
+  }
+  if (mmMaskCtx && mmMask) mmMaskCtx.clearRect(0, 0, mmMask.width, mmMask.height);
+}
+
 /** Révèle une zone autour de la base au démarrage (repères initiaux). */
 function revealStartArea() {
   const cc = [...buildings.values()].find((b) => b.owner === myId && b.type === 'cc');
@@ -3711,7 +3731,22 @@ function sweepRemote() {
 
 /* ------------------------------------------------------------------- partie */
 
+/** Remet à zéro tout l'état propre à une partie (appelé au début ET à la fin). */
+function resetMatchState() {
+  resetFog();
+  groups.clear();                       // groupes de contrôle (Ctrl+1…9) : ids de l'ancienne partie
+  for (const t of tracers) { scene.remove(t.line); t.line.geometry.dispose(); t.line.material.dispose(); }
+  tracers.length = 0;
+  if (placement) cancelPlacement();
+  pendingCommand = null;
+  energyProd = 0; energyUse = 0; lowPower = false;
+  aiMoney = 0; aiThink = 0; aiWave = []; aiAttacking = false;
+  navDirty = true;
+  fogAcc = 0; mmAcc = 0; hudAcc = 0; sweepAcc = 0; syncAcc = 0;
+}
+
 function beginMatch(roster, cfg) {
+  resetMatchState();
   players = roster.slice();
   settings = Object.assign({ money: 5000, fog: true, ai: 'none', alwaysBars: true }, cfg || {});
   myId = net.selfId;
@@ -3722,10 +3757,10 @@ function beginMatch(roster, cfg) {
   $('waiting').classList.add('hidden');
   $('hud').classList.remove('hidden');
   updateOrientationHint();
-  $('btn-rotate-close').addEventListener('click', () => {
+  $('btn-rotate-close').onclick = () => {
     rotateDismissed = true;
     updateOrientationHint();
-  });
+  };
 
   const me = players.find((p) => p.id === myId) || players[0];
   if (me) {
@@ -3789,6 +3824,7 @@ function backToLobby() {
   markers.length = 0;
   for (const f of rallyFlags) scene.remove(f);
   rallyFlags.length = 0;
+  resetMatchState();
 
   paused = false;
   $('pause-overlay').classList.add('hidden');
@@ -4241,6 +4277,17 @@ window.CAC = {
       if (!u) return false;
       orderMove(u, x, z, false);
       return true;
+    },
+
+    /* Nombre de cases explorées (tests du brouillard) + part du canvas de mémoire peinte */
+    explored() {
+      updateFog();                       // le rendu est gelé en test : on force la mise à jour
+      let n = 0;
+      for (let i = 0; i < exploredGrid.length; i++) n += exploredGrid[i];
+      const px = exploredCtx.getImageData(0, 0, FOG_RES, FOG_RES).data;
+      let painted = 0;
+      for (let i = 3; i < px.length; i += 4) if (px[i] > 8) painted++;
+      return { cases: n, total: exploredGrid.length, canvasPeint: +(painted / (FOG_RES * FOG_RES) * 100).toFixed(1) };
     },
 
     /* Fait sortir une unité d'un bâtiment (tests du point de sortie) */
