@@ -404,6 +404,56 @@ il ouvre simplement le feu sur ce qui est à portée.
 - Altitude de croisière 9 avec ombre portée, décollage/atterrissage lissés.
   Le panneau de sélection affiche « Munitions x / 6 ».
 
+## 16. Modèles 3D (assets libres)
+
+Le jeu ne contient **aucun asset sous licence restrictive**. Les formes
+procédurales d'`assets.js` restent la référence ; des modèles `.glb` viennent
+s'y substituer quand ils sont présents.
+
+**Intégré : KayKit « Space Base Bits » — CC0 1.0** (domaine public, redistribution
+autorisée, attribution non obligatoire). Provenance et licence complètes dans
+`assets/models/CREDITS.md`.
+
+| Bâtiment | Modèle |
+|---|---|
+| Centre de commandement | `basemodule_E.glb` |
+| Réacteur / Centrale | `windturbine_tall.glb` |
+| Dépôt | `cargodepot_A.glb` |
+| Raffinerie | `drill_structure.glb` |
+| Caserne | `basemodule_A.glb` |
+| Usine | `basemodule_garage.glb` |
+| Aérodrome | `landingpad_large.glb` |
+| Centre de recherche | `structure_tall.glb` |
+| Tourelle | `structure_low.glb` |
+| Batterie Patriot | `lander_B.glb` |
+
+**Comment ça marche :** `loadModels(MODEL_MANIFEST)` charge tout pendant l'écran
+de démarrage (~700 Ko), `createBuilding()` renvoie le modèle s'il est chargé,
+sinon la forme procédurale. Un fichier manquant ou corrompu ne casse **jamais**
+le jeu : au pire on garde les boîtes.
+
+**Remplacer un modèle :** déposer le `.glb` dans `assets/models/`, changer une
+ligne du `MODEL_MANIFEST` dans `game.js`. L'échelle est normalisée sur
+l'empreinte du bâtiment (`BUILDING_SIZE`), donc un modèle de n'importe quelle
+taille d'origine s'insère correctement, centré et posé au sol.
+
+**Limite assumée :** ces modèles utilisent un atlas de texture peint, ils ne
+sont **pas recolorables** à la couleur de la faction. Un anneau coloré est donc
+posé au sol sous chaque bâtiment. Les unités restent procédurales et teintées.
+
+### Sources libres évaluées
+
+| Source | Licence | Format | Usage |
+|---|---|---|---|
+| **KayKit** (kaylousberg.com) | CC0 | glTF (+bin+png) | bâtiments, décor |
+| **Kenney** (kenney.nl) | CC0 | GLB, OBJ, FBX | tourelles, véhicules, props |
+| **Poly Pizza** (poly.pizza) | CC0 1.0 par modèle | GLB direct | unités à l'unité |
+| **Quaternius** (quaternius.com) | CC0 sur les anciens packs, **QAL v1.0** sur les nouveaux | FBX/OBJ/Blend → conversion | chars, avions, tourelles |
+
+⚠️ Quaternius est passé à la *Quaternius Asset License* (28/08/2026) : usage
+commercial gratuit, mais **revente/redistribution des assets interdite** — donc
+à éviter dans un dépôt public, ou à charger depuis leur serveur.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :
