@@ -432,6 +432,47 @@ tourelle à `-1.06` rad vers la cible.
 À l'inverse, l'infanterie et les buggys (sans tourelle) pivotent encore tout le
 corps — et les aéronefs gardent leur cap de vol.
 
+## 17. Panneau de droite
+
+Le panneau est une colonne ancrée à droite, en trois blocs, dans l'esprit de
+Generals.
+
+**Minimap** — cadre avec la vue courante (`VUE ×1.0`) et un bouton `⌂` qui
+recentre sur le centre de commandement (raccourci <kbd>B</kbd>).
+
+**Ressources** — deux cartes côte à côte :
+
+| Carte | Contenu |
+|---|---|
+| Argent | montant en gros chiffres, libellé `CRÉDITS` ; passe en rouge sous 300 $ |
+| Énergie | `produite / consommée` + jauge ; bordure rouge en basse tension |
+
+**Sélection** — panneau contextuel sous les ressources : nom, portrait, barre de
+vie chiffrée, puis les statistiques en lignes (`Dégâts 45 · Portée 11 m · …`)
+ou, pour plusieurs unités, le décompte par modèle.
+
+**Construction** — panneau ancré en bas, avec trois niveaux :
+
+1. Les **onglets** portent une icône **et** un libellé (Bât. / Déf. / Inf. /
+   Véh. / Air) ; l'actif est un pavé clair. Le nom complet de la catégorie
+   s'affiche à droite de l'en-tête.
+2. Les **cartes** montrent l'icône, le **nom** en clair et `prix · durée`.
+   Le nom a une hauteur fixe pour que les prix s'alignent sur toute la ligne.
+3. Pendant un chantier, la carte passe en ambre et le pourcentage remplace le
+   prix. Quand plusieurs exemplaires d'une unité sont en file, une pastille
+   `×N` apparaît en haut à droite.
+
+**Infobulle** — au survol d'une carte, un panneau détaillé rappelle coût, durée,
+points de vie, énergie, dégâts, portée, rôle, bâtiment producteur et la
+description. Si l'achat est impossible, elle dit pourquoi (« Il manque 400 $. »,
+« Aucun bâtiment ne produit cette unité — construis Caserne Tactique. »)
+au lieu de laisser une case grisée muette.
+
+Sur téléphone, la colonne se réduit (190 px puis 162 px), la minimap descend à
+112 px puis 92 px et la grille passe à **deux colonnes** : à 162 px de large,
+trois colonnes écrasaient les noms. L'infobulle est désactivée au doigt, et le
+panneau peut se réduire pour laisser la grille défiler.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :

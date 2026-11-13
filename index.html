@@ -40,27 +40,44 @@
 
     <div class="minimap-frame">
       <canvas id="minimap" width="200" height="200"></canvas>
+      <div class="mm-bar">
+        <span id="mm-zoom">Zoom</span>
+        <button id="btn-home" type="button" title="Revenir à la base (B)">⌂</button>
+      </div>
     </div>
 
     <div class="res-row">
-      <div class="money">
-        <span class="money-sign">$</span>
-        <strong id="hud-money">0</strong>
+      <div class="res money" id="res-money">
+        <span class="res-ico">$</span>
+        <div class="res-body">
+          <strong id="hud-money">0</strong>
+          <small id="money-note">crédits</small>
+        </div>
       </div>
-      <div class="power-mini" id="power-mini" title="Énergie produite / consommée">
-        <span class="power-bolt">⚡</span>
-        <span id="power-label">0 / 0</span>
-        <div class="power-mini-track"><i id="power-fill"></i></div>
+      <div class="res power" id="power-mini" title="Énergie produite / consommée">
+        <span class="res-ico">⚡</span>
+        <div class="res-body">
+          <strong id="power-label">0 / 0</strong>
+          <div class="power-track"><i id="power-fill"></i></div>
+        </div>
       </div>
     </div>
 
-    <div class="build-tabs" id="build-tabs"></div>
-    <div class="build-grid" id="build-grid"></div>
-
-    <div id="hud-selection" class="sel-panel">
+    <section class="panel sel-panel" id="hud-selection">
       <div class="sel-empty">Aucune sélection</div>
-    </div>
+    </section>
+
+    <section class="panel panel-build">
+      <header class="panel-head">
+        <span>Construction</span>
+        <em id="cat-hint">Bâtiments</em>
+      </header>
+      <div class="build-tabs" id="build-tabs"></div>
+      <div class="build-grid" id="build-grid"></div>
+    </section>
   </div>
+
+  <div id="cell-tip" class="cell-tip hidden"></div>
 
   <!-- Barre de commandement (bas gauche) -->
   <div class="cmd-bar">

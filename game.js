@@ -274,6 +274,10 @@ function setupInput() {
         if (selected.size) toast('Halte.');
         return;
       }
+      if (e.code === 'KeyB') {
+        centerOnBase();
+        return;
+      }
       if (e.code === 'KeyH') {
         for (const id of selected) {
           const u = units.get(id);
@@ -1539,11 +1543,21 @@ function updateBars() {
 }
 
 function updateHud() {
-  $('hud-money').textContent = Math.floor(money).toLocaleString('fr-FR');
+  const cash = Math.floor(money);
+  $('hud-money').textContent = cash.toLocaleString('fr-FR');
+
+  const resMoney = $('res-money');
+  if (resMoney) resMoney.classList.toggle('low', cash < 300);
+
   $('power-label').textContent = `${energyProd} / ${energyUse}`;
   const ratio = energyUse === 0 ? (energyProd > 0 ? 1 : 0) : Math.min(1, energyProd / energyUse);
   $('power-fill').style.width = `${Math.max(3, ratio * 100)}%`;
   $('power-fill').classList.toggle('bad', lowPower);
+  $('power-mini').classList.toggle('alert', lowPower);
+
+  const zoom = $('mm-zoom');
+  if (zoom) zoom.textContent = `vue ×${(58 / cam.dist).toFixed(1)}`;
+
   $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
   refreshBuildGrid();
   renderBuildBar();
@@ -1760,18 +1774,91 @@ function icon(name) {
 let gridCat = 'structures';
 let gridRefs = [];
 
-function makeCell({ iconName, cost, title, onClick }) {
+/* ---------------------------------------------------------- infobulle de case */
+
+/** Ce bâtiment construit-il déjà cette unité ? */
+function hasProducer(type) {
+  for (const b of buildings.values()) {
+    if (b.owner === myId && b.built && (b.def.produces || []).includes(type)) return true;
+  }
+  return false;
+}
+
+/** Contenu de l'infobulle, recalculé à chaque survol (l'état du jeu évolue) */
+function buildTip(it) {
+  const d = it.def;
+  const lines = [
+    ['Coût', `${d.cost.toLocaleString('fr-FR')} $`],
+    ['Temps', `${d.time} s`]
+  ];
+
+  if (d.hp) lines.push(['Points de vie', `${d.hp}`]);
+  if (d.energy) lines.push(['Énergie', `${d.energy > 0 ? '+' : ''}${d.energy} ⚡`]);
+  if (d.defense) lines.push(['Défense', `${d.defense.dmg} dégâts · ${d.defense.range} m`]);
+  if (d.dmg && !d.defense) lines.push(['Dégâts', `${d.dmg}`]);
+  if (d.range && !d.defense) lines.push(['Portée', `${d.range} m`]);
+  if (d.speed) lines.push(['Vitesse', `${d.speed}`]);
+  if (d.role) lines.push(['Rôle', d.role]);
+  if (it.kind === 'unit' && it.fromName) lines.push(['Produit par', it.fromName]);
+
+  let warn = '';
+  if (money < d.cost) {
+    warn = `Il manque ${Math.ceil(d.cost - money).toLocaleString('fr-FR')} $.`;
+  } else if (it.kind === 'unit' && !hasProducer(it.type)) {
+    warn = `Aucun bâtiment ne produit cette unité — construis ${it.fromName}.`;
+  }
+
+  return `
+    <h4>${d.name}</h4>
+    ${lines.map(([k, v]) => `<div class="tip-line"><span>${k}</span><b>${v}</b></div>`).join('')}
+    ${d.desc ? `<div class="tip-desc">${d.desc}</div>` : ''}
+    ${warn ? `<div class="tip-warn">${warn}</div>` : '<div class="tip-key">Clic : lancer</div>'}`;
+}
+
+function showCellTip(el) {
+  const box = $('cell-tip');
+  if (!box || !el._item || IS_TOUCH) return;
+
+  box.innerHTML = buildTip(el._item);
+  box.classList.remove('hidden');
+
+  const r = el.getBoundingClientRect();
+  const w = box.offsetWidth || 246;
+  const h = box.offsetHeight || 150;
+
+  let left = r.left - w - 10;
+  if (left < 8) left = r.right + 10;
+  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+
+  const top = Math.min(Math.max(8, r.top + r.height / 2 - h / 2), window.innerHeight - h - 8);
+
+  box.style.left = `${Math.round(left)}px`;
+  box.style.top = `${Math.round(top)}px`;
+}
+
+function hideCellTip() {
+  const box = $('cell-tip');
+  if (box) box.classList.add('hidden');
+}
+
+function makeCell(it, onClick) {
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'build-cell';
-  el.title = title;
+  el.setAttribute('aria-label', it.def.name);
+  el._item = it;
   el.innerHTML = `
-    <span class="bc-icon">${icon(iconName)}</span>
-    <span class="bc-cost">$${cost.toLocaleString('fr-FR')}</span>
+    <span class="bc-icon">${icon(it.iconName)}</span>
+    <span class="bc-name">${it.def.name}</span>
+    <span class="bc-meta">$${it.def.cost.toLocaleString('fr-FR')} <span>· ${it.def.time}s</span></span>
     <span class="bc-fill" style="height:0"></span>
     <span class="bc-pct"></span>
     <span class="bc-queue"></span>`;
+
   el.addEventListener('click', onClick);
+  el.addEventListener('mouseenter', () => showCellTip(el));
+  el.addEventListener('mouseleave', hideCellTip);
+
   return {
     el,
     fill: el.querySelector('.bc-fill'),
@@ -1781,11 +1868,11 @@ function makeCell({ iconName, cost, title, onClick }) {
 }
 
 const TABS = [
-  ['structures', 'Bâtiments', 'structures'],
-  ['defense', 'Défense', 'defense'],
-  ['infantry', 'Infanterie', 'infantry'],
-  ['vehicles', 'Véhicules', 'tank'],
-  ['air', 'Aviation', 'aircraft']
+  ['structures', 'Bâtiments', 'structures', 'Bât.'],
+  ['defense', 'Défense', 'defense', 'Déf.'],
+  ['infantry', 'Infanterie', 'infantry', 'Inf.'],
+  ['vehicles', 'Véhicules', 'tank', 'Véh.'],
+  ['air', 'Aviation', 'aircraft', 'Air']
 ];
 
 function unitCat(def) {
@@ -1855,21 +1942,33 @@ function renderTabs() {
     gridCat = avail.length ? avail[0][0] : 'structures';
   }
 
-  for (const [cat, label, ic] of avail) {
+  for (const [cat, label, ic, short] of avail) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'tab' + (gridCat === cat ? ' active' : '');
     b.title = label;
     b.setAttribute('aria-label', label);
-    b.innerHTML = icon(ic);
-    b.addEventListener('click', () => { gridCat = cat; renderBuildGrid(); });
+    b.innerHTML = `${icon(ic)}<span>${short}</span>`;
+    b.addEventListener('click', () => {
+      if (gridCat === cat) return;
+      gridCat = cat;
+      audio.sfx('click');
+      renderBuildGrid();
+    });
     el.appendChild(b);
+  }
+
+  const hint = $('cat-hint');
+  if (hint) {
+    const cur = TABS.find(([c]) => c === gridCat);
+    hint.textContent = cur ? cur[1] : '';
   }
 }
 
 function renderBuildGrid() {
   const grid = $('build-grid');
   if (!grid) return;
+  hideCellTip();          // le survol ne se redéclenche pas après un changement d'onglet
   grid.textContent = '';
   gridRefs = [];
   if (mode !== 'game') return;
@@ -1877,17 +1976,13 @@ function renderBuildGrid() {
   renderTabs();
 
   for (const it of tabItems(gridCat)) {
-    const cell = makeCell({
-      iconName: it.iconName,
-      cost: it.cost,
-      title: it.title,
-      onClick: () => {
-        if (it.kind === 'building') {
-          audio.sfx('click');
-          startPlacement(it.type);
-        } else {
-          queueUnitAnywhere(it.type);
-        }
+    const cell = makeCell(it, () => {
+      hideCellTip();
+      if (it.kind === 'building') {
+        audio.sfx('click');
+        startPlacement(it.type);
+      } else {
+        queueUnitAnywhere(it.type);
       }
     });
     grid.appendChild(cell.el);
@@ -1930,6 +2025,7 @@ function refreshBuildGrid() {
       for (const b of buildings.values()) {
         if (b.owner === myId && b.type === r.type && !b.built) { site = b; break; }
       }
+      r.el.classList.toggle('building', !!site);
       if (site) {
         const p = Math.round(site.progress * 100);
         r.fill.style.height = `${p}%`;
@@ -1963,6 +2059,7 @@ function refreshBuildGrid() {
 
     const n = producer ? producer.queue.filter((j) => j.type === r.type).length : 0;
     r.queue.textContent = n > 1 ? `×${n}` : '';
+    r.el.classList.toggle('has-queue', n > 1);
   }
 }
 
@@ -1987,7 +2084,19 @@ function setPaused(v) {
 
 function togglePause() { setPaused(!paused); }
 
+/** Recentre la caméra sur le centre de commandement (touche B) */
+function centerOnBase() {
+  let fallback = null;
+  for (const b of buildings.values()) {
+    if (b.owner !== myId) continue;
+    if (b.type === 'cc') { cam.focus.set(b.x, 0, b.z); return; }
+    if (!fallback) fallback = b;
+  }
+  if (fallback) cam.focus.set(fallback.x, 0, fallback.z);
+}
+
 function bindHud() {
+  $('btn-home').addEventListener('click', centerOnBase);
   $('btn-pause').addEventListener('click', togglePause);
   $('btn-resume').addEventListener('click', () => setPaused(false));
   $('btn-pause-settings').addEventListener('click', () => $('settings-modal').classList.remove('hidden'));
