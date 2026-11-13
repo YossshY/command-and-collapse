@@ -11,7 +11,7 @@ import {
 import {
   createBuilding, createUnit, createCrystalField, createGroundTexture, createRock,
   createMoveMarker, createSelectionRing, createGhost, createScaffold,
-  createBar, setBar, loadModels
+  createBar, setBar
 } from './assets.js';
 import { Network } from './network.js';
 import { AudioEngine } from './audio.js';
@@ -21,21 +21,6 @@ const $ = (id) => document.getElementById(id);
 /* Détection tactile : pilote le rendu allégé et les commandes au doigt */
 const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const IS_PHONE = IS_TOUCH && Math.min(screen.width, screen.height) < 820;
-
-/* Modèles 3D (CC0, KayKit « Space Base Bits ») — voir assets/models/CREDITS.md.
-   Absents ou en échec de chargement : on retombe sur les formes procédurales. */
-const MODEL_MANIFEST = {
-  cc: 'assets/models/basemodule_E.glb',
-  power: 'assets/models/windturbine_tall.glb',
-  supply: 'assets/models/cargodepot_A.glb',
-  refinery: 'assets/models/drill_structure.glb',
-  barracks: 'assets/models/basemodule_A.glb',
-  factory: 'assets/models/basemodule_garage.glb',
-  airfield: 'assets/models/landingpad_large.glb',
-  research: 'assets/models/structure_tall.glb',
-  'defense-light': 'assets/models/structure_low.glb',
-  'defense-heavy': 'assets/models/lander_B.glb'
-};
 
 /* ------------------------------------------------------------------- état */
 
@@ -3132,17 +3117,6 @@ async function boot() {
 
   animate();
 
-  // Les modèles sont chargés pendant l'écran de démarrage (≈ 600 Ko)
-  try {
-    $('boot').textContent = 'Chargement des modèles 3D…';
-    const n = await loadModels(MODEL_MANIFEST, (done, total) => {
-      $('boot').textContent = `Chargement des modèles 3D… ${done}/${total}`;
-    });
-    console.log(`[modèles] ${n} modèle(s) chargé(s)`);
-  } catch (err) {
-    console.warn('[modèles] chargement impossible, formes procédurales', err);
-  }
-
   try {
     await net.init();
     $('boot').classList.add('hidden');
@@ -3208,13 +3182,6 @@ window.CAC = {
       updateHud();
       return money;
     },
-    /* Pose un bâtiment immédiatement (test des modèles, équilibrage) */
-    building(type, x, z, owner = myId) {
-      const id = `${owner}:dbgB${++entitySeq}`;
-      const b = addBuilding({ id, type, owner, x, z });
-      return b.id;
-    },
-
     /* Sonde le raycast : utile pour vérifier qu'un clic touche bien sa cible */
     ray(x, y) {
       raycaster.setFromCamera(ndcFromClient(x, y), camera);
