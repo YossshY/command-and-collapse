@@ -1416,10 +1416,20 @@ function applyDamage(entity, dmg, sourceId = null) {
   // Un aéronef posé décolle dès qu'il est touché
   if (entity.kind === 'unit' && entity.alt && entity.landed) entity.landed = false;
 
-  // Une unité en garde riposte (poursuite limitée) au lieu de rester passive
-  if (entity.hp > 0 && entity.kind === 'unit' && entity.mode === MODE.GUARD) {
-    entity.mode = MODE.GUARD_RETALIATE;
-    entity.home = { x: entity.x, z: entity.z };
+  // Riposte : une unité en garde se défend toujours ; une unité en déplacement
+  // s'arrête pour rendre les coups si l'agresseur est à sa portée de tir.
+  if (entity.hp > 0 && entity.kind === 'unit') {
+    const src = sourceId ? getEntity(sourceId) : null;
+    const reach = (entity.def.range || 0) * 1.25;
+    const canHit = src && src.owner !== entity.owner &&
+      Math.hypot(src.x - entity.x, src.z - entity.z) <= reach;
+
+    if (entity.mode === MODE.GUARD || (entity.mode === MODE.MOVE_TO && canHit)) {
+      entity.mode = MODE.GUARD_RETALIATE;
+      entity.home = { x: entity.x, z: entity.z };
+      entity.dest = null;
+      entity.path = null;
+    }
   }
 
   if (entity.hp <= 0) {
@@ -2646,7 +2656,18 @@ function navMarkRect(cx, cz, w, d) {
 }
 
 function navMarkCircle(cx, cz, r) {
-  navMarkRect(cx, cz, r * 2, r * 2);
+  const i0 = Math.floor((cx - r + MAP_SIZE / 2) / NAV_CELL);
+  const i1 = Math.floor((cx + r + MAP_SIZE / 2) / NAV_CELL);
+  const j0 = Math.floor((cz - r + MAP_SIZE / 2) / NAV_CELL);
+  const j1 = Math.floor((cz + r + MAP_SIZE / 2) / NAV_CELL);
+  for (let j = Math.max(0, j0); j <= Math.min(NAV_N - 1, j1); j++) {
+    const cz2 = -MAP_SIZE / 2 + (j + 0.5) * NAV_CELL;
+    const row = j * NAV_N;
+    for (let i = Math.max(0, i0); i <= Math.min(NAV_N - 1, i1); i++) {
+      const cx2 = -MAP_SIZE / 2 + (i + 0.5) * NAV_CELL;
+      if ((cx2 - cx) ** 2 + (cz2 - cz) ** 2 <= r * r) navBlocked[row + i] = 1;
+    }
+  }
 }
 
 /** Reconstruit la grille : bâtiments + rochers. */
@@ -2656,7 +2677,7 @@ function rebuildNav() {
     navMarkRect(b.x, b.z, b.def.w + 1.4, b.def.d + 1.4);
   }
   for (const r of decorRocks) {
-    navMarkCircle(r.position.x, r.position.z, 2.2);
+    navMarkCircle(r.position.x, r.position.z, ROCK_RADIUS + 0.9);
   }
   navDirty = false;
   for (const u of units.values()) if (!u.alt) u.path = null;
@@ -3104,6 +3125,40 @@ function updateUnitAI(u, dt) {
   }
 }
 
+const ROCK_RADIUS = 2.4;
+
+/**
+ * Sort une unité de tout obstacle : rectangle pour les bâtiments, disque pour
+ * les rochers. Toujours appliqué (pas seulement quand la case est occupée).
+ */
+function resolveCollision(u) {
+  const R = u.def.radius || 1.7;
+
+  for (const b of buildings.values()) {
+    const hw = b.def.w / 2 + R;
+    const hd = b.def.d / 2 + R;
+    const dx = u.x - b.x;
+    const dz = u.z - b.z;
+    if (Math.abs(dx) >= hw || Math.abs(dz) >= hd) continue;
+    const px = hw - Math.abs(dx);
+    const pz = hd - Math.abs(dz);
+    if (px < pz) u.x = b.x + (dx < 0 ? -hw : hw);
+    else u.z = b.z + (dz < 0 ? -hd : hd);
+  }
+
+  for (const r of decorRocks) {
+    const dx = u.x - r.position.x;
+    const dz = u.z - r.position.z;
+    const min = R + ROCK_RADIUS;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= min * min) continue;
+    if (d2 < 1e-4) { u.x += min; continue; }
+    const d = Math.sqrt(d2);
+    u.x = r.position.x + (dx / d) * min;
+    u.z = r.position.z + (dz / d) * min;
+  }
+}
+
 /**
  * Évitement local : les unités se repoussent doucement quand elles se
  * chevauchent. Sans ça, un groupe empilé traverse les bâtiments en bloc.
@@ -3225,24 +3280,10 @@ function updateUnits(dt) {
     u.x = THREE.MathUtils.clamp(u.x, -lim, lim);
     u.z = THREE.MathUtils.clamp(u.z, -lim, lim);
 
-    // Collision douce : une unité qui se retrouve dans un obstacle (bâtiment
-    // construit sur son passage) est repoussée vers la case libre la plus proche.
-    if (!u.alt) {
-      if (navDirty) rebuildNav();
-      const cell = navCellOf(u.x, u.z);
-      if (cell >= 0 && navBlocked[cell]) {
-        const free = navNearestFree(cell, 3);
-        if (free >= 0) {
-          const c = navCenter(free);
-          const ddx = c.x - u.x;
-          const ddz = c.z - u.z;
-          const dd = Math.hypot(ddx, ddz) || 1;
-          const push = Math.min(dd, 8 * dt + 0.03);
-          u.x += (ddx / dd) * push;
-          u.z += (ddz / dd) * push;
-        }
-      }
-    }
+    // Collisions réelles : les bâtiments sont des rectangles, les rochers des
+    // disques. On ressort l'unité par le côté le moins pénétré — plus de
+    // tremblement ni de blocage contre un rocher.
+    if (!u.alt) resolveCollision(u);
 
     // Altitude lissée : décollage / atterrissage des aéronefs
     const cruise = u.alt || 0;
@@ -4107,6 +4148,19 @@ window.CAC = {
       return [...units.values()]
         .filter((u) => u.owner === myId)
         .map((u) => [Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10]);
+    },
+
+    /* Applique un tir (tests de riposte) */
+    hit(id, dmg, fromId) {
+      const e = getEntity(id);
+      if (!e) return null;
+      applyDamage(e, dmg, fromId || null);
+      return { mode: e.mode, hp: e.hp, attacker: e.lastAttacker || null, dest: e.dest };
+    },
+
+    /* Positions des rochers (tests de navigation) */
+    rocks() {
+      return decorRocks.map((r) => [Math.round(r.position.x), Math.round(r.position.z)]);
     },
 
     /* Point d'accostage calculé pour une raffinerie (tests) */
