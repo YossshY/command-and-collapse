@@ -2574,3 +2574,25 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 }
 
 .sel-sell:active { transform: translateY(1px); }
+
+
+/* Pourcentage de chantier : en haut de la carte, plus en bas */
+.build-cell .bc-pct {
+  inset: 5px 0 auto 0;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+
+/* Pourcentage de chantier : en haut à droite de la carte (le badge de touche
+   occupe le coin haut-gauche) */
+.build-cell .bc-pct {
+  inset: 4px 5px auto auto;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(8, 14, 19, 0.72);
+}

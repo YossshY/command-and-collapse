@@ -1126,14 +1126,26 @@ function nearestRefinery(owner, x, z) {
   return best;
 }
 
-/** Point d'accostage d'une raffinerie : sur la face tournée vers le collecteur. */
+/**
+ * Point d'accostage d'une raffinerie : de préférence sur la face tournée vers
+ * le collecteur, mais on écarte les faces hors carte ou occupées (coin de map).
+ */
 function dockPointFor(ref, x, z) {
   const r = Math.max(ref.def.w, ref.def.d) / 2 + 2.4;
-  let ax = x - ref.x;
-  let az = z - ref.z;
-  let l = Math.hypot(ax, az);
-  if (l < 0.01) { ax = 0; az = 1; l = 1; }
-  return { x: ref.x + (ax / l) * r, z: ref.z + (az / l) * r };
+  const base = Math.atan2(z - ref.z, x - ref.x);
+  const lim = MAP_SIZE / 2 - 3;
+  if (navDirty) rebuildNav();
+
+  for (let i = 0; i < 17; i++) {
+    const off = i === 0 ? 0 : Math.ceil(i / 2) * (Math.PI / 8) * (i % 2 ? 1 : -1);
+    const a = base + off;
+    const px = ref.x + Math.cos(a) * r;
+    const pz = ref.z + Math.sin(a) * r;
+    if (Math.abs(px) > lim || Math.abs(pz) > lim) continue;   // hors carte
+    const c = navCellOf(px, pz);
+    if (c >= 0 && !navBlocked[c]) return { x: px, z: pz };    // case libre
+  }
+  return { x: ref.x, z: Math.min(lim, ref.z + r) };
 }
 
 function updateCollector(u, dt) {
@@ -1204,12 +1216,21 @@ function updateCollector(u, dt) {
     }
     u.target = { x: u.dock.x, z: u.dock.z };
 
-    if (Math.hypot(u.x - u.dock.x, u.z - u.dock.z) < 2.4) {
+    const nearDock = Math.hypot(u.x - u.dock.x, u.z - u.dock.z) < 2.4;
+    // Secours : au bout de 10 s d'approche vaine mais à portée de la raffinerie,
+    // on décharge quand même — l'économie ne doit jamais se bloquer.
+    const fallback = u.dockT > 10 &&
+      Math.hypot(u.x - ref.x, u.z - ref.z) < Math.max(ref.def.w, ref.def.d) / 2 + 14;
+
+    if (nearDock || fallback) {
       if (u.owner === myId) { money += u.carry; audio.sfx('cash'); }
       else if (isHost && u.owner === aiId) aiMoney += u.carry;
       u.carry = 0;
       u.state = 'idle';
       u.target = null;
+      u.path = null;
+      u.dockT = 0;
+      u.dock = null;
     }
   }
 }
@@ -4052,6 +4073,34 @@ window.CAC = {
       updateHud();
       return money;
     },
+    /* Avance la simulation de n pas sans dépendre du rendu (tests) */
+    step(n = 60, dt = 1 / 30) {
+      for (let i = 0; i < n; i++) {
+        updateBuildings(dt);
+        updateUnits(dt);
+        updateFields(dt);
+        updateMarkers(dt);
+        updateTracers(dt);
+        updateAI(dt);
+      }
+      updateBars();
+      return true;
+    },
+
+    /* État des collecteurs (diagnostic) */
+    harvesters() {
+      return [...units.values()]
+        .filter((u) => u.def.role === 'récolte')
+        .map((u) => ({
+          id: u.id, state: u.state, carry: u.carry,
+          pos: [Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10],
+          target: u.target ? [Math.round(u.target.x), Math.round(u.target.z)] : null,
+          dock: u.dock ? [Math.round(u.dock.x), Math.round(u.dock.z)] : null,
+          path: (u.path || []).length,
+          stuck: Math.round((u.stuckT || 0) * 10) / 10
+        }));
+    },
+
     /* Applique n pas de séparation locale (tests) */
     separate(n = 1, dt = 0.033) {
       for (let i = 0; i < n; i++) separateUnits(dt);
