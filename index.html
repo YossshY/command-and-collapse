@@ -45,19 +45,17 @@
   <div class="right-col">
 
     <!-- Argent + énergie -->
-    <div class="res-row">
-      <div class="money-plate" id="res-money">
+    <div class="money-plate" id="res-money">
         <div class="money-value"><span>$</span><strong id="hud-money">0</strong></div>
-        <div class="power-line">
-          <span>ÉNERGIE</span>
-          <b id="power-label">0/0</b>
-        </div>
+      <div class="power-line">
+        <span>ÉNERGIE</span>
+        <b id="power-label">0/0</b>
       </div>
+    </div>
 
-      <div class="power-col" id="power-mini" title="Énergie produite / consommée">
-        <div class="power-col-track"><i id="power-fill"></i></div>
-        <span class="power-col-value" id="power-value">0</span>
-      </div>
+    <div class="power-col" id="power-mini" title="Énergie produite / consommée">
+      <div class="power-col-track"><i id="power-fill"></i></div>
+      <span class="power-col-value" id="power-value">0</span>
     </div>
 
     <!-- Radar tactique -->
@@ -69,15 +67,7 @@
       </div>
     </section>
 
-    <section class="panel sel-panel" id="hud-selection">
-      <div class="sel-empty">Aucune sélection</div>
-    </section>
-
     <section class="panel panel-build">
-      <header class="panel-head">
-        <span>Construction</span>
-        <em id="cat-hint">Bâtiments</em>
-      </header>
       <div class="build-tabs" id="build-tabs"></div>
       <div class="build-grid" id="build-grid"></div>
     </section>
@@ -92,8 +82,13 @@
     <button id="btn-help" class="cmd-sq" type="button" title="Aide / raccourcis">?</button>
   </div>
 
-  <!-- Bandeau chantiers + productions (bas centre) -->
-  <div id="build-bar" class="build-bar hidden"></div>
+  <!-- Sélection + chantiers (bas centre, comme Generals) -->
+  <div class="bottom-dock">
+    <section class="panel sel-panel" id="hud-selection">
+      <div class="sel-empty">Aucune sélection</div>
+    </section>
+    <div id="build-bar" class="build-bar hidden"></div>
+  </div>
 
   <div id="low-power" class="alert hidden">⚡ Basse tension — production ralentie</div>
 

@@ -437,21 +437,29 @@ corps — et les aéronefs gardent leur cap de vol.
 Le panneau est une colonne ancrée à droite, en trois blocs, dans l'esprit de
 Generals.
 
-**Minimap** — cadre avec la vue courante (`VUE ×1.0`) et un bouton `⌂` qui
-recentre sur le centre de commandement (raccourci <kbd>B</kbd>).
+La colonne est une grille sur deux colonnes, comme la maquette de référence :
 
-**Ressources** — deux cartes côte à côte :
+```
+┌───────────────┬──┐
+│  argent       │▓▓│   plaque d'argent (gauche) + jauge d'énergie (droite)
+│  énergie      │▓▓│
+├───────────────┤▓▓│
+│  radar        │▓▓│   le radar occupe toute la largeur restante
+├───────────────┴──┤
+│ onglets          │
+│ cartes           │
+└──────────────────┘
+```
 
-| Carte | Contenu |
-|---|---|
-| Argent | montant en gros chiffres, libellé `CRÉDITS` ; passe en rouge sous 300 $ |
-| Énergie | `produite / consommée` + jauge ; bordure rouge en basse tension |
+La jauge d'énergie est **une seule grande barre verticale** qui longe l'argent
+et le radar, et les cartes remplissent le reste de la hauteur.
 
-**Sélection** — panneau contextuel sous les ressources : nom, portrait, barre de
-vie chiffrée, puis les statistiques en lignes (`Dégâts 45 · Portée 11 m · …`)
-ou, pour plusieurs unités, le décompte par modèle.
+**Sélection** — déplacée en **bas au centre** (comme Generals), au-dessus du
+bandeau de chantiers : nom, portrait, barre de vie chiffrée, puis les
+statistiques en lignes (`Dégâts 45 · Portée 11 m · …`). Le panneau est masqué
+tant que rien n'est sélectionné.
 
-**Construction** — panneau ancré en bas, avec trois niveaux :
+**Construction** — panneau sous le radar, avec deux niveaux :
 
 1. Les **onglets** portent une icône **et** un libellé (Bât. / Déf. / Inf. /
    Véh. / Air) ; l'actif est un pavé clair. Le nom complet de la catégorie

@@ -1681,8 +1681,10 @@ function updateSelectionPanel() {
   const ents = [...selected].map(getEntity).filter(Boolean);
   if (!ents.length) {
     el.innerHTML = '<div class="sel-empty">Aucune sélection</div>';
+    el.classList.add('is-empty');
     return;
   }
+  el.classList.remove('is-empty');
 
   if (ents.length === 1) {
     el.innerHTML = singleEntityHtml(ents[0]);
