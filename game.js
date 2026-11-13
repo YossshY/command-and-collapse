@@ -1481,7 +1481,7 @@ function drawMinimap() {
   // Zones non explorées
   if (settings.fog && exploredCanvas && mmMaskCtx) {
     mmMaskCtx.globalCompositeOperation = 'source-over';
-    mmMaskCtx.fillStyle = '#080b0f';
+    mmMaskCtx.fillStyle = 'rgba(16, 14, 11, 0.86)';   // noir opaque = radar vide ; on garde une teinte de terrain
     mmMaskCtx.fillRect(0, 0, S, S);
     mmMaskCtx.globalCompositeOperation = 'destination-out';
     mmMaskCtx.drawImage(exploredCanvas, 0, 0, S, S);
