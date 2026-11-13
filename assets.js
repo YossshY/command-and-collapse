@@ -713,42 +713,59 @@ function uBuggy(color, faction) {
   return shade(g);
 }
 
+/** Chenille : bande sombre + patins + barbotins visibles de loin */
+function addTracks(g, sx, len, width, y, dark, metal, treads = 7) {
+  g.add(box(width, 0.5, len, dark, sx, y, 0));                       // bande
+  g.add(box(width * 1.06, 0.12, len * 0.94, metal, sx, y + 0.3, 0));  // haut de bande
+
+  for (let i = 0; i < treads; i++) {
+    const z = -len / 2 + 0.18 + (i * (len - 0.36)) / (treads - 1);
+    g.add(box(width * 1.1, 0.09, 0.12, dark, sx, y + 0.34, z));
+    g.add(box(width * 1.1, 0.09, 0.12, dark, sx, y - 0.26, z));
+  }
+
+  for (const z of [-len / 2 + 0.3, len / 2 - 0.3]) {
+    const sp = cyl(0.26, 0.26, width * 0.9, 12, metal, sx, y, z);
+    sp.rotation.z = Math.PI / 2;
+    g.add(sp);
+  }
+}
+
 function uTank(color, faction) {
   const g = new THREE.Group();
   const body = mat(color, { rough: 0.6, metal: 0.2 });
   const dark = mat(PALETTE.chassis, { rough: 0.85, metal: 0.1 });
   const metal = mat(PALETTE.metal, { rough: 0.45, metal: 0.35 });
 
-  for (const sx of [-1, 1]) {
-    g.add(box(0.46, 0.55, 3, dark, sx * 0.82, 0.28, 0));
-    for (let i = -1; i <= 1; i++) {
-      const w = cyl(0.2, 0.2, 0.5, 10, metal, sx * 0.82, 0.28, i * 0.95);
-      w.rotation.z = Math.PI / 2;
-      g.add(w);
-    }
-  }
-  g.add(box(1.5, 0.55, 2.9, body, 0, 0.75, 0));
+  for (const sx of [-0.85, 0.85]) addTracks(g, sx, 3.0, 0.5, 0.3, dark, metal);
 
+  g.add(box(1.5, 0.5, 2.7, body, 0, 0.72, 0));
   const glacis = box(1.5, 0.45, 0.8, body, 0, 0.62, 1.25);
   glacis.rotation.x = -0.45;
   g.add(glacis);
+  for (const sx of [-1, 1]) g.add(box(0.1, 0.26, 1.9, body, sx * 0.78, 0.9, -0.1));
 
-  for (const sx of [-1, 1]) g.add(box(0.12, 0.3, 2.4, body, sx * 0.78, 0.62, 0));
+  // Fût orientable : tout ce qui tourne est dans ce groupe
+  const turret = new THREE.Group();
+  turret.name = 'turret';
+  turret.position.set(0, 1.05, -0.15);
+  g.add(turret);
 
-  g.add(cyl(0.62, 0.76, 0.5, 12, body, 0, 1.25, -0.1));
-  g.add(cyl(0.22, 0.22, 0.1, 10, metal, 0.28, 1.52, -0.35));
+  turret.add(cyl(0.6, 0.76, 0.46, 12, body, 0, 0.1, 0));
+  turret.add(box(0.5, 0.34, 0.5, body, 0, 0.06, 0.55));          // masque
 
-  const barrel = cyl(0.12, 0.14, 2.6, 10, metal, 0, 1.3, 1.3);
+  const barrel = cyl(0.11, 0.13, 2.5, 10, metal, 0, 0.1, 1.6);
   barrel.rotation.x = Math.PI / 2;
-  g.add(barrel);
+  turret.add(barrel);
 
-  const muzzle = cyl(0.19, 0.19, 0.3, 10, dark, 0, 1.3, 2.5);
+  const muzzle = cyl(0.18, 0.18, 0.3, 10, dark, 0, 0.1, 2.75);
   muzzle.rotation.x = Math.PI / 2;
-  g.add(muzzle);
+  turret.add(muzzle);
 
-  g.add(cyl(0.035, 0.035, 1.0, 6, metal, -0.45, 1.75, -0.6));
+  turret.add(cyl(0.2, 0.2, 0.34, 10, metal, 0.3, 0.42, -0.1));     // trappe
+  turret.add(cyl(0.03, 0.03, 1.1, 6, metal, -0.42, 0.6, -0.35));   // antenne
 
-  g.userData = { type: 'tank' };
+  g.userData = { type: 'tank', turret };
   return shade(g);
 }
 
@@ -758,84 +775,103 @@ function uTankHeavy(color, faction) {
   const dark = mat(PALETTE.chassis, { rough: 0.85, metal: 0.1 });
   const metal = mat(PALETTE.metal, { rough: 0.45, metal: 0.35 });
 
-  for (const sx of [-1, 1]) {
-    g.add(box(0.6, 0.7, 3.6, dark, sx * 1.0, 0.35, 0));
-    for (let i = -1; i <= 1; i++) {
-      const w = cyl(0.26, 0.26, 0.64, 10, metal, sx * 1.0, 0.35, i * 1.15);
-      w.rotation.z = Math.PI / 2;
-      g.add(w);
-    }
-  }
-  g.add(box(1.9, 0.7, 3.4, body, 0, 0.9, 0));
-  g.add(box(1.9, 0.5, 0.9, body, 0, 0.75, 1.5));
-  g.add(box(1.7, 0.6, 1.7, body, 0, 1.55, -0.2));
+  for (const sx of [-1.05, 1.05]) addTracks(g, sx, 3.7, 0.62, 0.36, dark, metal, 8);
 
-  for (const sx of [-1, 1]) {
-    const b = cyl(0.13, 0.15, 2.8, 10, metal, sx * 0.42, 1.6, 1.4);
+  g.add(box(1.9, 0.66, 3.3, body, 0, 0.88, 0));
+  g.add(box(1.9, 0.46, 0.9, body, 0, 0.72, 1.5));
+
+  const turret = new THREE.Group();
+  turret.name = 'turret';
+  turret.position.set(0, 1.36, -0.2);
+  g.add(turret);
+
+  turret.add(box(1.7, 0.58, 1.7, body, 0, 0.12, 0));
+  for (const sx of [-0.42, 0.42]) {
+    const b = cyl(0.13, 0.15, 2.7, 10, metal, sx, 0.14, 1.65);
     b.rotation.x = Math.PI / 2;
-    g.add(b);
+    turret.add(b);
 
-    const m = cyl(0.2, 0.2, 0.3, 10, dark, sx * 0.42, 1.6, 2.7);
+    const m = cyl(0.2, 0.2, 0.3, 10, dark, sx, 0.14, 2.9);
     m.rotation.x = Math.PI / 2;
-    g.add(m);
+    turret.add(m);
   }
-  g.add(cyl(0.05, 0.05, 1.2, 6, metal, -0.7, 2.1, -0.7));
+  turret.add(cyl(0.05, 0.05, 1.2, 6, metal, -0.66, 0.6, -0.6));
 
-  g.userData = { type: 'tank-heavy' };
+  g.userData = { type: 'tank-heavy', turret };
   return shade(g);
 }
 
 function uArtillery(color, faction) {
   const g = new THREE.Group();
-  const body = mat(color, { rough: 0.6, metal: 0.2 });
+  const body = mat(color, { rough: 0.55, metal: 0.25 });
   const dark = mat(PALETTE.chassis, { rough: 0.85, metal: 0.1 });
-  const metal = mat(PALETTE.metal, { rough: 0.45, metal: 0.4 });
+  const metal = mat(PALETTE.metal, { rough: 0.4, metal: 0.4 });
 
-  for (const sx of [-1, 1]) g.add(box(0.5, 0.5, 2.8, dark, sx * 0.8, 0.25, 0));
-  g.add(box(1.5, 0.5, 2.6, body, 0, 0.65, 0));
-  g.add(box(1.0, 0.5, 1.2, body, 0, 1.05, -0.3));
+  for (const sx of [-0.9, 0.9]) addTracks(g, sx, 3.2, 0.52, 0.3, dark, metal, 7);
 
-  const tube = cyl(0.13, 0.16, 3.4, 10, metal, 0, 1.55, 0.9);
-  tube.rotation.x = Math.PI / 2 - 0.22;
-  g.add(tube);
+  g.add(box(1.6, 0.5, 2.9, body, 0, 0.7, 0));
 
-  const brake = cyl(0.22, 0.22, 0.35, 10, dark, 0, 1.9, 2.5);
-  brake.rotation.x = Math.PI / 2 - 0.22;
-  g.add(brake);
+  // Béquilles de tir stabilisatrices
+  for (const sx of [-1, 1]) {
+    const leg = box(0.16, 0.14, 1.1, metal, sx * 1.15, 0.34, -1.0);
+    leg.rotation.y = sx * 0.5;
+    g.add(leg);
+  }
 
-  for (const sx of [-1, 1]) g.add(box(0.12, 0.12, 1.0, metal, sx * 0.55, 0.5, -1.2));
+  const turret = new THREE.Group();
+  turret.name = 'turret';
+  turret.position.set(0, 1.05, -0.5);
+  g.add(turret);
 
-  g.userData = { type: 'artillery' };
+  turret.add(box(1.1, 0.6, 1.3, body, 0, 0.15, 0));
+
+  const barrel = cyl(0.09, 0.12, 3.4, 10, metal, 0, 0.28, 1.9);
+  barrel.rotation.x = Math.PI / 2 - 0.12;   // léger relèvement
+  turret.add(barrel);
+
+  turret.add(cyl(0.16, 0.16, 0.34, 10, dark, 0, 0.28, 3.55));
+  turret.add(box(0.7, 0.3, 0.5, dark, 0, 0.55, -0.4));       // bloc optique
+
+  g.userData = { type: 'artillery', turret };
   return shade(g);
 }
 
 function uAircraft(color, faction) {
   const g = new THREE.Group();
-  const body = mat(color, { rough: 0.45, metal: 0.35 });
-  const dark = mat(PALETTE.chassis, { rough: 0.7, metal: 0.2 });
-  const glass = mat(PALETTE.glass, { rough: 0.15, metal: 0.6 });
+  const body = mat(color, { rough: 0.42, metal: 0.4 });
+  const dark = mat(PALETTE.chassis, { rough: 0.7, metal: 0.25 });
+  const glass = mat(0x9fe6ff, { rough: 0.12, metal: 0.05, emissive: 0x1b4a63 });
 
-  const fus = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 2.2, 6, 10), body);
-  fus.rotation.x = Math.PI / 2;
-  fus.position.y = 1.6;
-  g.add(fus);
+  const fuselage = cyl(0.22, 0.34, 3.4, 10, body, 0, 0, 0);
+  fuselage.rotation.x = Math.PI / 2;
+  g.add(fuselage);
 
-  g.add(box(3.4, 0.12, 0.9, body, 0, 1.6, 0.1));
-  g.add(box(1.4, 0.1, 0.5, body, 0, 1.6, -1.2));
-  g.add(box(0.1, 0.6, 0.5, body, 0, 1.9, -1.2));
+  const nose = cyl(0.03, 0.24, 1.1, 10, body, 0, 0, 2.2);
+  nose.rotation.x = Math.PI / 2;
+  g.add(nose);
 
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glass);
-  cockpit.position.set(0, 1.75, 0.9);
-  g.add(cockpit);
-
+  // Ailes en flèche
   for (const sx of [-1, 1]) {
-    const e = cyl(0.18, 0.18, 0.9, 8, dark, sx * 0.9, 1.45, -0.3);
-    e.rotation.x = Math.PI / 2;
-    g.add(e);
-  }
-  for (const sx of [-1, 1]) g.add(cyl(0.05, 0.05, 1.2, 6, dark, sx * 0.5, 0.6, 0.2));
+    const wing = box(1.9, 0.12, 1.0, body, sx * 1.1, 0, -0.3);
+    wing.rotation.y = sx * 0.42;
+    wing.rotation.z = -sx * 0.06;
+    g.add(wing);
 
-  g.userData = { type: 'aircraft', flying: true };
+    const tip = box(0.3, 0.34, 0.7, dark, sx * 2.0, 0.02, -0.72);
+    g.add(tip);
+  }
+
+  // Dérives jumelles
+  for (const sx of [-1, 1]) {
+    const fin = box(0.1, 0.75, 0.6, body, sx * 0.32, 0.36, -1.55);
+    fin.rotation.x = -0.28;
+    g.add(fin);
+  }
+
+  g.add(box(0.46, 0.2, 0.7, glass, 0, 0.24, 1.1));      // verrière
+  g.add(box(1.5, 0.06, 0.26, dark, 0, -0.02, -2.1));    // stabilisateur
+
+  g.userData = { type: 'aircraft' };
   return shade(g);
 }
 

@@ -404,6 +404,34 @@ il ouvre simplement le feu sur ce qui est à portée.
 - Altitude de croisière 9 avec ombre portée, décollage/atterrissage lissés.
   Le panneau de sélection affiche « Munitions x / 6 ».
 
+## 16. Silhouettes des unités et fûts orientables
+
+Les unités restent **entièrement procédurales** (aucun asset externe, aucun
+téléchargement, licence libre par construction) et **teintées à la couleur de la
+faction** — c'est l'avantage qu'on ne veut pas perdre.
+
+Ce qui distingue chaque véhicule :
+
+| Unité | Signes distinctifs |
+|---|---|
+| Char Paladin | chenilles à patins, tourelle orientable, canon + frein de bouche |
+| Char Mammouth | chenilles larges, tourelle à **canon double** |
+| Artillerie Helios | canon long relevé, béquilles stabilisatrices à l'arrière |
+| Buggy Lynx | silhouette basse, arceau |
+| Intercepteur Wraith | ailes en flèche, dérives jumelles, verrière |
+
+**Chenilles** (`addTracks`) : bande sombre + patins haut et bas + deux barbotins
+aux extrémités. De près ça lit comme une chenille, de loin ça casse la boîte.
+
+**Fûts orientables** (`aimTurret`) : sur les blindés, la tourelle est un groupe
+enfant nommé `turret`, et **le châssis ne pivote plus pour tirer**. Un char qui
+roule vers le nord peut canarder à l'est sans dévier de sa route. Sans cible, le
+fût revient doucement dans l'axe du châssis. Mesuré en jeu : châssis à `0.00`,
+tourelle à `-1.06` rad vers la cible.
+
+À l'inverse, l'infanterie et les buggys (sans tourelle) pivotent encore tout le
+corps — et les aéronefs gardent leur cap de vol.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :

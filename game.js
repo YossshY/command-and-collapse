@@ -1158,8 +1158,37 @@ function findTarget(u, explicitRange) {
   return best;
 }
 
+/** Ramène un angle dans [-π, π] */
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+/**
+ * Oriente le fût vers la cible sans toucher au châssis.
+ * Un char en mouvement garde son cap et pivote seulement sa tourelle.
+ */
+function aimTurret(u, dt) {
+  const turret = u.mesh.userData && u.mesh.userData.turret;
+  if (!turret) return;
+
+  let t = u.orderTarget ? getEntity(u.orderTarget) : null;
+  if (t && Math.hypot(t.x - u.x, t.z - u.z) > (u.def.range || 0) * 1.25) t = null;
+  if (!t) t = findTarget(u, (u.def.range || 8) * 1.15);
+
+  if (t) {
+    const want = wrapAngle(Math.atan2(t.x - u.x, t.z - u.z) - u.ry);
+    turret.rotation.y += wrapAngle(want - turret.rotation.y) * Math.min(1, dt * 9);
+  } else {
+    // Sans cible le fût revient dans l'axe du châssis
+    turret.rotation.y += wrapAngle(-turret.rotation.y) * Math.min(1, dt * 2.5);
+  }
+}
+
 function updateCombat(u, dt) {
   if (!u.def.dmg) return;
+  aimTurret(u, dt);
   if (u.alt && u.ammo <= 0) return;   // plus de munitions : il rentre se réarmer
   u.cd -= dt;
   if (u.cd > 0) return;
@@ -1176,8 +1205,9 @@ function updateCombat(u, dt) {
   u.cd = u.def.cd;
   if (u.alt) u.ammo -= 1;
 
-  // Un aéronef garde son cap de vol : il tire en passant, sans pivoter sur place
-  if (!u.alt) {
+  // Un aéronef garde son cap de vol ; un blindé à tourelle ne pivote que son fût
+  const hasTurret = u.mesh.userData && u.mesh.userData.turret;
+  if (!u.alt && !hasTurret) {
     u.ry = Math.atan2(target.x - u.x, target.z - u.z);
     u.mesh.rotation.y = u.ry;
   }
