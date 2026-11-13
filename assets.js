@@ -809,28 +809,51 @@ function uArtillery(color, faction) {
 
   for (const sx of [-0.9, 0.9]) addTracks(g, sx, 3.2, 0.52, 0.3, dark, metal, 7);
 
+  // Caisse, glacis avant incliné et pont moteur à l'arrière
   g.add(box(1.6, 0.5, 2.9, body, 0, 0.7, 0));
+  const glacis = box(1.56, 0.12, 0.62, body, 0, 0.93, 1.28);   // 1,56 < 1,6 : pas de faces confondues
+  glacis.rotation.x = 0.4;                                    // l'avant descend
+  g.add(glacis);
+  g.add(box(1.3, 0.12, 0.9, dark, 0, 0.99, -1.0));
 
-  // Béquilles de tir stabilisatrices
-  for (const sx of [-1, 1]) {
-    const leg = box(0.16, 0.14, 1.1, metal, sx * 1.15, 0.34, -1.0);
-    leg.rotation.y = sx * 0.5;
-    g.add(leg);
-  }
+  // Bêche de stabilisation à l'arrière, plantée vers le sol, sur deux bras
+  const spade = box(1.5, 0.8, 0.1, metal, 0, 0.42, -1.8);
+  spade.rotation.x = 0.35;                                    // le bas recule : elle mord dans le sol
+  g.add(spade);
+  for (const sx of [-0.5, 0.5]) g.add(box(0.16, 0.14, 0.5, dark, sx, 0.62, -1.58));
 
+  // Tourelle : pivot à la verticale du centre de la caisse
   const turret = new THREE.Group();
   turret.name = 'turret';
-  turret.position.set(0, 1.05, -0.5);
+  turret.position.set(0, 0.95, -0.3);
   g.add(turret);
 
-  turret.add(box(1.1, 0.6, 1.3, body, 0, 0.15, 0));
+  turret.add(box(1.5, 0.62, 1.7, body, 0, 0.31, 0));            // caisson
+  turret.add(box(0.12, 0.3, 1.0, dark, -0.81, 0.28, -0.1));      // caisses de rangement
+  turret.add(box(0.12, 0.3, 1.0, dark, 0.81, 0.28, -0.1));
+  turret.add(box(0.5, 0.12, 0.5, dark, -0.35, 0.68, -0.35));     // trappe
+  turret.add(box(0.3, 0.24, 0.3, dark, 0.45, 0.74, 0.1));        // bloc optique
+  turret.add(box(0.66, 0.46, 0.3, dark, 0, 0.32, 0.95));         // masque de canon
 
-  const barrel = cyl(0.09, 0.12, 3.4, 10, metal, 0, 0.28, 1.9);
-  barrel.rotation.x = Math.PI / 2 - 0.12;   // léger relèvement
+  // Tube : tout est aligné sur UN axe incliné (élévation d'artillerie), pour que
+  // le manchon, le tube et le frein de bouche ne se désolidarisent jamais.
+  const el = 0.32;
+  const pivot = { y: 0.34, z: 1.05 };
+  const along = (d) => ({ y: pivot.y + Math.sin(el) * d, z: pivot.z + Math.cos(el) * d });
+  const tilt = Math.PI / 2 - el;
+
+  const sleeve = cyl(0.2, 0.2, 0.8, 14, metal, 0, along(0.4).y, along(0.4).z);
+  sleeve.rotation.x = tilt;
+  turret.add(sleeve);
+
+  const barrelLen = 2.5;
+  const barrel = cyl(0.1, 0.14, barrelLen, 14, metal, 0, along(barrelLen / 2).y, along(barrelLen / 2).z);
+  barrel.rotation.x = tilt;
   turret.add(barrel);
 
-  turret.add(cyl(0.16, 0.16, 0.34, 10, dark, 0, 0.28, 3.55));
-  turret.add(box(0.7, 0.3, 0.5, dark, 0, 0.55, -0.4));       // bloc optique
+  const muzzle = cyl(0.17, 0.17, 0.38, 14, dark, 0, along(barrelLen - 0.1).y, along(barrelLen - 0.1).z);
+  muzzle.rotation.x = tilt;                                   // aligné sur le tube (il était vertical)
+  turret.add(muzzle);
 
   g.userData = { type: 'artillery', turret };
   return shade(g);

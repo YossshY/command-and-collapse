@@ -1337,52 +1337,181 @@ function updateFields(dt) {
 
 /* -------------------------------------------------------------------- combat */
 
+/* ---------------------------------------------------------------------------
+ * CIBLAGE — verrouillage de cible (« target lock »)
+ *
+ *  1. Une unité qui a une cible valide la GARDE : tant qu'elle est vivante et
+ *     à portée (+15 % de tolérance), plus aucun scan, donc plus de changement
+ *     de cible d'une image à l'autre.
+ *  2. Quand elle doit choisir, chaque ennemi reçoit un score :
+ *       proximité  +  blessure (on achève les blessés)  +  efficacité de l'arme
+ *       contre le type d'armure de la cible  +  quelques ajustements.
+ *  3. Sans cible, le scan est espacé (≈ 4 fois par seconde) au lieu d'être
+ *     refait à chaque image.
+ * ------------------------------------------------------------------------- */
+
+const LOCK_TOLERANCE = 1.15;      // on garde la cible jusqu'à 115 % de la portée
+const SCAN_INTERVAL = 0.25;       // s entre deux scans quand on n'a pas de cible
+const LOCK_LOST_GRACE = 2.5;      // s : cible verrouillée mais hors de tir (hors poursuite) avant de la lâcher
+
+/** Pondération du score de cible (somme de trois termes normalisés 0 → 1). */
+const TARGET_W = { prox: 55, hurt: 35, eff: 45 };
+
+/** Classe d'armure déduite de la silhouette de l'unité. */
+const ARMOR_OF_SHAPE = {
+  infantry: 'infantry', 'infantry-at': 'infantry',
+  buggy: 'light', collector: 'light', artillery: 'light', 'truck-bomb': 'light',
+  tank: 'armor', 'tank-heavy': 'heavy',
+  aircraft: 'air'
+};
+
+/** Classe d'arme de chaque unité (les défenses sont déduites de leurs dégâts). */
+const WEAPON_OF_TYPE = {
+  vanguard: 'rifle', bastion: 'rifle', milicien: 'rifle', lynx: 'rifle', coyote: 'rifle',
+  javelin: 'at', kobra: 'at', scorpion: 'at',
+  paladin: 'cannon', mammoth: 'cannon', chacal: 'cannon', tempest: 'cannon',
+  cyclone: 'gatling',
+  helios: 'artillery', vipere: 'artillery',
+  wraith: 'air', faucon: 'bomb',
+  kamikaze: 'blast'
+};
+
 /**
- * Choix de cible, dans l'esprit des RTS : une unité ennemie passe avant un
- * bâtiment, celui qui vient de nous toucher passe avant tout, et une défense
- * qui tire est traitée comme une menace réelle.
+ * Efficacité d'une arme contre une armure (1 = neutre). Sert au CHOIX de la
+ * cible ; les dégâts réellement infligés ne changent pas.
  */
-function findTarget(u, explicitRange) {
-  const range = explicitRange || u.def.range || 0;
+const EFFICIENCY = {
+  //            infantry light armor heavy air  structure
+  rifle:     { infantry: 1.3, light: 1.0, armor: 0.5, heavy: 0.35, air: 0.6,  structure: 0.45 },
+  at:        { infantry: 0.6, light: 1.1, armor: 1.4, heavy: 1.3,  air: 1.0,  structure: 0.8 },
+  cannon:    { infantry: 0.7, light: 1.1, armor: 1.2, heavy: 1.0,  air: 0.2,  structure: 1.1 },
+  gatling:   { infantry: 1.4, light: 1.0, armor: 0.6, heavy: 0.45, air: 1.5,  structure: 0.4 },
+  artillery: { infantry: 1.0, light: 1.0, armor: 0.9, heavy: 0.9,  air: 0.15, structure: 1.5 },
+  air:       { infantry: 0.7, light: 1.0, armor: 0.9, heavy: 0.7,  air: 1.5,  structure: 0.8 },
+  bomb:      { infantry: 0.5, light: 0.8, armor: 1.0, heavy: 1.0,  air: 0.1,  structure: 1.6 },
+  blast:     { infantry: 1.0, light: 1.1, armor: 1.1, heavy: 1.0,  air: 0.1,  structure: 1.6 }
+};
+
+function armorOf(e) {
+  if (e.kind === 'building') return 'structure';
+  return ARMOR_OF_SHAPE[e.def.shape] || 'light';
+}
+
+function weaponOf(a) {
+  if (a.kind === 'building') return (a.def.defense && a.def.defense.dmg >= 40) ? 'cannon' : 'rifle';
+  return WEAPON_OF_TYPE[a.type] || 'rifle';
+}
+
+function weaponRange(a) {
+  return a.kind === 'building' ? (a.def.defense ? a.def.defense.range : 0) : (a.def.range || 0);
+}
+
+/** Distance utile pour tirer : jusqu'au bord d'un bâtiment, au centre d'une unité. */
+function rangeTo(a, t) {
+  const d = Math.hypot(t.x - a.x, t.z - a.z);
+  return t.kind === 'building' ? d - Math.max(t.def.w, t.def.d) / 2 : d;
+}
+
+/** Portée de recherche : plus large quand l'unité est en poursuite (attaque-mobile). */
+function scanRangeOf(u) {
+  const r = weaponRange(u);
+  if (u.kind !== 'unit') return r;
+  if (u.mode === MODE.ATTACK_MOVE) return r * (u.alt ? 1.6 : 1.5);
+  // Riposte : on va chercher celui qui nous tire dessus, même s'il a plus de
+  // portée que nous (la laisse de 26 u autour du poste limite la poursuite)
+  if (u.mode === MODE.GUARD_RETALIATE) return r * 1.8;
+  return r;
+}
+
+/** Score d'un ennemi pour l'attaquant `a` (plus haut = plus prioritaire). */
+function scoreTarget(a, e, d, scanRange) {
+  const prox = 1 - Math.min(1, Math.max(0, d) / Math.max(1, scanRange));
+  const maxHp = e.maxHp || (e.def && e.def.hp) || 1;
+  const hurt = 1 - Math.max(0, Math.min(1, e.hp / maxHp));
+  const eff = (EFFICIENCY[weaponOf(a)] || EFFICIENCY.rifle)[armorOf(e)] ?? 1;
+
+  let s = TARGET_W.prox * prox + TARGET_W.hurt * hurt + TARGET_W.eff * (eff - 0.5);
+
+  if (e.kind === 'building') s -= e.def && e.def.defense ? -10 : 25;   // défense armée : menace ; sinon cible passive
+  else if (e.def.role === 'récolte') s -= 8;                           // un collecteur ne tire pas
+  if (a.lastAttacker === e.id && a.lastHitAt && performance.now() - a.lastHitAt < 6000) s += 30;   // rancune
+  return s;
+}
+
+/** Meilleur ennemi dans le rayon donné, ou null. N'est appelé que lorsqu'on n'a pas de cible. */
+function scanBest(a, range) {
   if (!range) return null;
-
-  // Riposte immédiate contre l'agresseur s'il est encore à portée utile
-  // (la rancune s'efface au bout de 8 s)
-  const grudge = u.lastHitAt && performance.now() - u.lastHitAt < 8000;
-  const rev = grudge && u.lastAttacker ? getEntity(u.lastAttacker) : null;
-  if (rev && rev.owner !== u.owner &&
-      Math.hypot(rev.x - u.x, rev.z - u.z) <= range * 1.8) {
-    return rev;
-  }
-
-  const score = (e, d) => {
-    let s = 120 - d * 2;
-    if (e.kind === 'building') s -= 60;                    // un bâtiment ne bouge pas : moins urgent
-    if (e.def && e.def.defense) s += 30;                   // une défense qui tire est dangereuse
-    if (e.kind === 'unit' && e.def.role === 'récolte') s -= 15;
-    if (u.lastAttacker === e.id) s += 70;
-    if (e.hp <= 45) s += 10;                               // achever un blessé
-    return s;
-  };
-
   let best = null;
   let bestScore = -Infinity;
 
   for (const e of units.values()) {
-    if (e.owner === u.owner) continue;
-    const d = Math.hypot(e.x - u.x, e.z - u.z);
+    if (e.owner === a.owner || e.hp <= 0) continue;
+    const d = Math.hypot(e.x - a.x, e.z - a.z);
     if (d > range) continue;
-    const s = score(e, d);
+    const s = scoreTarget(a, e, d, range);
     if (s > bestScore) { bestScore = s; best = e; }
   }
   for (const e of buildings.values()) {
-    if (e.owner === u.owner) continue;
-    const d = Math.hypot(e.x - u.x, e.z - u.z) - Math.max(e.def.w, e.def.d) / 2;
+    if (e.owner === a.owner || e.hp <= 0) continue;
+    const d = rangeTo(a, e);
     if (d > range) continue;
-    const s = score(e, d);
+    const s = scoreTarget(a, e, d, range);
     if (s > bestScore) { bestScore = s; best = e; }
   }
   return best;
+}
+
+/** Cible verrouillée si elle est toujours valable (vivante, ennemie, à portée + 15 %). */
+function validLock(a, range) {
+  if (!a.lockId) return null;
+  const t = getEntity(a.lockId);
+  if (!t || t.hp <= 0 || t.owner === a.owner || rangeTo(a, t) > range * LOCK_TOLERANCE) {
+    a.lockId = null;
+    return null;
+  }
+  return t;
+}
+
+/**
+ * Point d'entrée unique du ciblage (combat, poursuite, tourelles).
+ *  - cible verrouillée valable → on la garde, aucun scan ;
+ *  - sinon, scan espacé puis verrouillage sur le meilleur score.
+ * Seule dérogation : une unité qui encaisse un tir d'une UNITÉ ennemie alors
+ * qu'elle visait un BÂTIMENT passe sur son agresseur (une seule fois : ensuite
+ * elle le garde). Désactivable avec LOCK_BREAK_ON_THREAT.
+ */
+const LOCK_BREAK_ON_THREAT = true;
+
+function acquireTarget(a, range, dt = 0) {
+  if (!range) return null;
+  const locked = validLock(a, range);
+
+  if (locked) {
+    if (LOCK_BREAK_ON_THREAT && locked.kind === 'building' && a.lastAttacker &&
+        a.lastHitAt && performance.now() - a.lastHitAt < 3000) {
+      const thr = getEntity(a.lastAttacker);
+      if (thr && thr.kind === 'unit' && thr.owner !== a.owner && thr.hp > 0 &&
+          rangeTo(a, thr) <= range) {
+        a.lockId = thr.id;
+        return thr;
+      }
+    }
+    return locked;
+  }
+
+  // Pas de cible : scan espacé
+  a.scanT = (a.scanT === undefined ? Math.random() * SCAN_INTERVAL : a.scanT) - dt;
+  if (a.scanT > 0) return null;
+  a.scanT = SCAN_INTERVAL;
+
+  const t = scanBest(a, range);
+  a.lockId = t ? t.id : null;
+  return t;
+}
+
+/** Compatibilité : choix de cible sans verrou (outils de test). */
+function findTarget(u, explicitRange) {
+  return scanBest(u, explicitRange || weaponRange(u));
 }
 
 /** Ramène un angle dans [-π, π] */
@@ -1400,9 +1529,13 @@ function aimTurret(u, dt) {
   const turret = u.mesh.userData && u.mesh.userData.turret;
   if (!turret) return;
 
+  // Le fût suit la cible désignée, sinon la cible verrouillée — jamais de scan ici
   let t = u.orderTarget ? getEntity(u.orderTarget) : null;
-  if (t && Math.hypot(t.x - u.x, t.z - u.z) > (u.def.range || 0) * 1.25) t = null;
-  if (!t) t = findTarget(u, (u.def.range || 8) * 1.15);
+  if (t && rangeTo(u, t) > (u.def.range || 0) * LOCK_TOLERANCE) t = null;
+  if (!t && u.lockId) {
+    const l = getEntity(u.lockId);
+    if (l && l.hp > 0 && rangeTo(u, l) <= (u.def.range || 0) * LOCK_TOLERANCE) t = l;
+  }
 
   if (t) {
     const want = wrapAngle(Math.atan2(t.x - u.x, t.z - u.z) - u.ry);
@@ -1421,12 +1554,30 @@ function updateCombat(u, dt) {
   if (u.cd > 0) return;
 
   // La cible désignée à la main passe avant l'acquisition automatique
+  const range = u.def.range || 0;
   let target = null;
   if (u.orderTarget) {
     const t = getEntity(u.orderTarget);
-    if (t && Math.hypot(t.x - u.x, t.z - u.z) <= (u.def.range || 0)) target = t;
+    if (t && rangeTo(u, t) <= range) target = t;
   }
-  if (!target) target = findTarget(u);
+  if (!target) {
+    const t = acquireTarget(u, scanRangeOf(u), dt);
+    if (t && rangeTo(u, t) <= range) {
+      target = t;
+      u.lockOutSince = 0;
+    } else if (t) {
+      // Verrouillée mais hors de tir : normal en poursuite ; sinon on la lâche
+      // au bout de quelques secondes pour ne pas rester figé sur elle.
+      const chasing = u.mode === MODE.ATTACK_MOVE || u.mode === MODE.GUARD_RETALIATE ||
+                      u.mode === MODE.ATTACK_OBJECT;
+      const now = performance.now();
+      if (!u.lockOutSince) u.lockOutSince = now;
+      if (!chasing && now - u.lockOutSince > LOCK_LOST_GRACE * 1000) {
+        u.lockId = null;
+        u.lockOutSince = 0;
+      }
+    }
+  }
   if (!target) return;
 
   u.cd = u.def.cd;
@@ -2694,9 +2845,13 @@ const MODE_LABEL = {
   rearm: 'réarmement'
 };
 
-/** Distance d'arrêt devant une cible : on tire, on ne monte pas dessus. */
+/**
+ * Distance d'arrêt devant une cible : la PORTÉE MAXIMALE de l'arme. L'unité
+ * s'immobilise dès qu'elle peut tirer (97 % pour ne pas osciller pile sur la
+ * limite quand la séparation la pousse d'un cheveu).
+ */
 function stopDistance(u) {
-  return Math.max(1.4, (u.def.range || 8) * 0.8);
+  return Math.max(1.4, (u.def.range || 8) * 0.97);
 }
 
 function faceTowards(u, t, dt) {
@@ -3079,7 +3234,7 @@ function updateAircraftAI(u, dt) {
 
   /* -------- Attaque-mobile */
   if (u.mode === MODE.ATTACK_MOVE) {
-    const t = findTarget(u, range * 1.6);
+    const t = acquireTarget(u, scanRangeOf(u), dt);
     if (t) {
       if (Math.hypot(t.x - u.x, t.z - u.z) > range * 1.7) u.target = { x: t.x, z: t.z };
       else orbitAround(u, t, dt, range);
@@ -3155,18 +3310,17 @@ function updateUnitAI(u, dt) {
         u.target = null;
         break;
       }
-      const d = Math.hypot(t.x - u.x, t.z - u.z);
-      if (d > stopDistance(u)) u.target = { x: t.x, z: t.z };
+      if (rangeTo(u, t) > stopDistance(u)) u.target = { x: t.x, z: t.z };
       else { u.target = null; faceTowards(u, t, dt); }
       break;
     }
 
     /* -------- Attaque-mobile : avance vers le point en engageant */
     case MODE.ATTACK_MOVE: {
-      const t = findTarget(u, range * 1.5);
+      const t = acquireTarget(u, scanRangeOf(u), dt);
       if (t) {
-        const d = Math.hypot(t.x - u.x, t.z - u.z);
-        if (d > stopDistance(u)) u.target = { x: t.x, z: t.z };
+        // on s'arrête dès qu'on est à portée de tir maximale
+        if (rangeTo(u, t) > stopDistance(u)) u.target = { x: t.x, z: t.z };
         else { u.target = null; faceTowards(u, t, dt); }
         break;
       }
@@ -3196,7 +3350,7 @@ function updateUnitAI(u, dt) {
 
     /* -------- Garde riposte : engage à portée, revient à son poste */
     case MODE.GUARD_RETALIATE: {
-      const t = findTarget(u, range);
+      const t = acquireTarget(u, scanRangeOf(u), dt);
 
       // Plus d'ennemi : on repart là où on allait
       if (!t && u.resume) {
@@ -3211,8 +3365,7 @@ function updateUnitAI(u, dt) {
       if (t && away > leash && Math.hypot(t.x - u.x, t.z - u.z) > range * 0.8) {
         u.target = { x: u.home.x, z: u.home.z };
       } else if (t) {
-        const d = Math.hypot(t.x - u.x, t.z - u.z);
-        u.target = d > stopDistance(u) ? { x: t.x, z: t.z } : null;
+        u.target = rangeTo(u, t) > stopDistance(u) ? { x: t.x, z: t.z } : null;
         if (!u.target) faceTowards(u, t, dt);
       } else if (u.home && Math.hypot(u.home.x - u.x, u.home.z - u.z) > 2) {
         u.target = { x: u.home.x, z: u.home.z };
@@ -3447,8 +3600,8 @@ function updateDefense(b, dt) {
   b.cd -= dt;
   if (b.cd > 0) return;
 
-  const target = findTarget(b, d.range);
-  if (!target) return;
+  const target = acquireTarget(b, d.range, dt);
+  if (!target || rangeTo(b, target) > d.range) return;
 
   b.cd = d.cd;
 
@@ -4322,11 +4475,27 @@ window.CAC = {
     },
 
     /* Cible choisie par l'IA de tir d'une unité (tests) */
+    /* Détail du score de chaque ennemi à portée de scan (tests du ciblage) */
+    scores(id) {
+      const a = getEntity(id);
+      if (!a) return null;
+      const range = scanRangeOf(a);
+      const out = [];
+      for (const e of [...units.values(), ...buildings.values()]) {
+        if (e.owner === a.owner || e.hp <= 0) continue;
+        const d = rangeTo(a, e);
+        if (d > range) continue;
+        out.push({ id: e.id.slice(-5), type: e.type, d: +d.toFixed(1), arme: weaponOf(a), armure: armorOf(e),
+                   score: +scoreTarget(a, e, d, range).toFixed(1) });
+      }
+      return out.sort((x, y) => y.score - x.score);
+    },
+
     targetOf(id) {
       const u = getEntity(id);
       if (!u) return null;
-      const t = findTarget(u);
-      return t ? { id: t.id, kind: t.kind, name: t.def.name } : null;
+      const t = u.lockId ? getEntity(u.lockId) : findTarget(u);
+      return t ? { id: t.id, kind: t.kind, name: t.def.name, verrou: !!u.lockId } : null;
     },
 
     /* Chemin calculé entre deux points (tests de navigation) */

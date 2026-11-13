@@ -373,10 +373,28 @@ il ouvre simplement le feu sur ce qui est à portée.
 | `attackMove` | avance vers le point en engageant tout sur son passage, reprend ensuite |
 | `attackObject` | poursuit la cible désignée, s'arrête à portée de tir, s'arrête à sa mort |
 
+### Ciblage : verrouillage et score
+
+- **Verrou de cible** (`acquireTarget`) : une fois une cible acquise, l'unité ne scanne
+  plus tant qu'elle est **vivante et à portée +15 %** (`LOCK_TOLERANCE`). Fini le
+  changement de cible d'une image à l'autre. Sans cible, le scan est espacé
+  (4 fois par seconde) au lieu d'être refait à chaque image.
+- **Score** quand il faut choisir (`scoreTarget`) :
+  `proximité × 55 + blessure × 35 + (efficacité − 0,5) × 45`, plus des ajustements
+  (bâtiment passif −25, défense armée +10, collecteur −8, agresseur récent +30).
+- **Efficacité arme / armure** (`EFFICIENCY`) : armes `rifle`, `at`, `cannon`, `gatling`,
+  `artillery`, `air`, `bomb`, `blast` contre armures `infantry`, `light`, `armor`,
+  `heavy`, `air`, `structure` (déduites de la silhouette). Elle sert au **choix** de la
+  cible ; les dégâts infligés ne changent pas.
+- **Seule dérogation** (`LOCK_BREAK_ON_THREAT`) : une unité qui vise un bâtiment et
+  reçoit un tir d'une unité ennemie passe sur son agresseur, une fois, puis le garde.
+
+
 **Règles clés :**
 
-- Une unité **ne monte jamais sur sa cible** : `stopDistance = portée × 0.8`.
-  C'était le bug « il continue jusqu'à sa cible ».
+- Une unité **ne monte jamais sur sa cible** : elle s'arrête dès qu'elle atteint sa
+  **portée maximale** (`stopDistance = portée × 0,97`, mesurée jusqu'au bord pour un
+  bâtiment). C'était le bug « il continue jusqu'à sa cible ».
 - Une unité touchée en `guard` passe en `guardRetaliate` : elle riposte puis
   revient à son poste, au lieu de rester passive ou de courir partout.
 - Le collecteur garde sa machine à états (`toField` / `harvesting` /
