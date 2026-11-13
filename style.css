@@ -1122,3 +1122,153 @@ kbd {
   text-align: center;
   padding: 24px;
 }
+
+
+/* =========================================================================
+ * MOBILE / TACTILE
+ * ========================================================================= */
+
+#scene { touch-action: none; -webkit-user-select: none; user-select: none; }
+body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+
+.touch-only { display: none; }
+@media (pointer: coarse) {
+  .touch-only { display: list-item; }
+}
+
+/* Bandeau « passe en paysage », discret et fermable */
+.rotate-hint {
+  position: fixed;
+  left: 50%;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 7px 8px 7px 14px;
+  background: rgba(10, 18, 26, 0.95);
+  border: 1px solid #3a5c7a;
+  border-radius: 999px;
+  color: #cfe3f2;
+  font-size: 12px;
+  line-height: 1.25;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.rotate-hint button {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(120, 190, 230, 0.12);
+  border: 1px solid #2c4054;
+  border-radius: 50%;
+  color: #9fb6c9;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ tablette */
+@media (max-width: 900px) {
+  .right-col {
+    width: 180px;
+    top: calc(6px + env(safe-area-inset-top, 0px));
+    right: calc(6px + env(safe-area-inset-right, 0px));
+    bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 4px;
+  }
+
+  .minimap-frame { padding: 3px; border-radius: 6px; }
+  #minimap { width: 100%; height: auto; display: block; }
+
+  .res-row { gap: 4px; }
+  .money { font-size: 14px; }
+  .money-sign { font-size: 12px; }
+  .power-mini { font-size: 10px; padding: 2px 4px; }
+
+  .build-tabs { gap: 2px; }
+  .build-tabs .tab { font-size: 9px; padding: 3px 2px; letter-spacing: 0; }
+
+  .build-grid { gap: 3px; min-height: 56px; }
+  .build-cell { border-radius: 3px; padding: 1px; }
+  .build-cell .bc-icon svg { width: 17px; height: 17px; }
+  .build-cell .bc-cost { font-size: 8px; }
+  .build-cell .bc-pct { font-size: 9px; }
+
+  .sel-panel { font-size: 10px; min-height: 0; max-height: 108px; }
+  .sel-panel .sel-name { font-size: 11px; }
+  .sel-empty { padding: 8px 6px; font-size: 9px; }
+
+  .cmd-bar {
+    left: calc(6px + env(safe-area-inset-left, 0px));
+    bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 6px;
+  }
+
+  .cmd-sq { width: 44px; height: 44px; font-size: 18px; }
+
+  .build-bar {
+    max-width: calc(100% - 210px);
+    bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    font-size: 10px;
+  }
+
+  .hud-top-left { top: calc(6px + env(safe-area-inset-top, 0px)); left: calc(6px + env(safe-area-inset-left, 0px)); }
+  .hud-top-left .badge { font-size: 11px; padding: 4px 8px; gap: 5px; }
+  .peers { font-size: 10px; }
+
+  .hud-hint { display: none; }
+}
+
+/* ------------------------------------------------------------------ téléphone */
+@media (max-width: 560px), (max-height: 430px) {
+  .right-col { width: 150px; gap: 3px; }
+
+  #minimap { width: 100%; height: auto; }
+  .money { font-size: 12px; }
+  .power-mini { display: none; }
+
+  .build-tabs .tab { font-size: 8px; padding: 2px 1px; }
+  .build-grid { grid-template-columns: repeat(3, 1fr); gap: 2px; min-height: 48px; }
+  .build-cell .bc-icon svg { width: 14px; height: 14px; }
+  .build-cell .bc-cost { font-size: 7px; line-height: 1; }
+
+  .sel-panel { font-size: 9px; max-height: 84px; }
+  .sel-empty { padding: 6px 4px; font-size: 8px; }
+  .cmd-sq { width: 40px; height: 40px; font-size: 16px; }
+  .build-bar { max-width: calc(100% - 158px); }
+
+  .toast { font-size: 11px; padding: 6px 10px; }
+}
+
+/* En portrait le bandeau passe au-dessus de la barre de commandement,
+   pour ne pas recouvrir le badge joueur ni la minimap */
+@media (orientation: portrait) and (max-width: 900px) {
+  .rotate-hint {
+    top: auto;
+    left: 12px;
+    right: 166px;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+    max-width: none;
+    font-size: 11px;
+    padding: 6px 6px 6px 12px;
+  }
+}
+
+/* Lobby en portrait : formulaires pleine largeur, cibles larges */
+@media (max-width: 900px) {
+  .lobby { padding: 14px; }
+  .lobby-head h1 { font-size: 26px; }
+  .lobby-grid { gap: 10px; }
+  .card { padding: 12px; }
+  .btn { min-height: 42px; }
+  .faction { min-height: 60px; }
+
+  /* Aucun zoom involontaire, mais les champs restent à 16px (iOS) */
+  input, select, textarea { font-size: 16px; }
+}

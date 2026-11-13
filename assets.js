@@ -65,8 +65,7 @@ function cyl(rt, rb, h, seg, material, x = 0, y = 0, z = 0) {
  * Texture procédurale du sol : désert / terre battue, routes d'asphalte vers
  * le centre, taches de gravier. Une seule texture 2048² pour toute la carte.
  */
-export function createGroundTexture() {
-  const S = 2048;
+export function createGroundTexture(S = 2048) {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = S;
   const ctx = canvas.getContext('2d');
@@ -95,8 +94,9 @@ export function createGroundTexture() {
     ctx.fill();
   }
 
-  // Grain fin
-  for (let i = 0; i < 30000; i++) {
+  // Grain fin (proportionnel à la résolution)
+  const grain = Math.round(30000 * (S / 2048) ** 2);
+  for (let i = 0; i < grain; i++) {
     const v = 60 + Math.random() * 60;
     ctx.fillStyle = `rgba(${v + 30},${v + 18},${v},0.16)`;
     ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);

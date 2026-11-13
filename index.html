@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Command &amp; Collapse — STR 3D multijoueur P2P</title>
 <meta name="description" content="Jeu de stratégie en temps réel 3D dans le navigateur, multijoueur pair-à-pair sans serveur." />
 <meta name="theme-color" content="#0a0e13" />
@@ -75,6 +75,12 @@
   <div id="low-power" class="alert hidden">⚡ Basse tension — production ralentie</div>
 
   <div id="select-box" class="hidden"></div>
+
+  <div id="rotate-hint" class="rotate-hint hidden">
+    <span>Passe le téléphone en paysage pour plus de confort.</span>
+    <button id="btn-rotate-close" type="button" aria-label="Fermer">✕</button>
+  </div>
+
   <div id="toasts"></div>
 </div>
 
@@ -254,6 +260,8 @@
       <li><kbd>X</kbd> attaque-mobile (puis clic sur la destination)</li>
       <li><kbd>C</kbd> halte · <kbd>H</kbd> garde sur place</li>
       <li>Les avions attaquent en cercle et ne se posent que sur leur piste</li>
+      <li class="touch-only">Tactile : appui simple = sélection · <strong>appui long</strong> = ordre ·
+        glisser = déplacer la caméra · pincer = zoom</li>
       <li><kbd>Suppr</kbd> vendre le bâtiment sélectionné</li>
       <li><kbd>P</kbd> / <kbd>Espace</kbd> pause (escarmouche IA)</li>
       <li><kbd>Échap</kbd> annuler le placement / désélectionner</li>

@@ -18,6 +18,10 @@ import { AudioEngine } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 
+/* Détection tactile : pilote le rendu allégé et les commandes au doigt */
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const IS_PHONE = IS_TOUCH && Math.min(screen.width, screen.height) < 820;
+
 /* ------------------------------------------------------------------- état */
 
 const net = new Network();
@@ -73,9 +77,9 @@ function setupThree() {
   const canvas = $('scene');
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_PHONE ? 1.5 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !IS_PHONE;   // ombres coupées sur téléphone
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
@@ -106,7 +110,7 @@ function setupThree() {
   scene.add(sun.target);
 
   const groundMat = new THREE.MeshStandardMaterial({
-    map: createGroundTexture(),
+    map: createGroundTexture(IS_PHONE ? 1024 : 2048),
     roughness: 0.95,
     metalness: 0.05
   });
@@ -123,7 +127,8 @@ function setupThree() {
   scene.add(edge);
 
   // Rochers décoratifs (hors zones de base et de cristaux)
-  for (let i = 0; i < 46; i++) {
+  const rockCount = IS_PHONE ? 22 : 46;
+  for (let i = 0; i < rockCount; i++) {
     const x = (Math.random() - 0.5) * (MAP_SIZE - 8);
     const z = (Math.random() - 0.5) * (MAP_SIZE - 8);
     if (SPAWNS.some((s) => Math.hypot(s.x - x, s.z - z) < 16)) continue;
@@ -170,6 +175,16 @@ function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  updateOrientationHint();
+}
+
+/** Bandeau « paysage » : uniquement en jeu, sur tactile, en portrait */
+let rotateDismissed = false;
+function updateOrientationHint() {
+  const el = $('rotate-hint');
+  if (!el) return;
+  const portrait = window.matchMedia('(orientation: portrait)').matches;
+  el.classList.toggle('hidden', !(mode === 'game' && IS_TOUCH && portrait) || rotateDismissed);
 }
 
 /* ------------------------------------------------------------------ caméra */
@@ -192,7 +207,7 @@ function updateCamera(dt) {
   if (keys.has('KeyA') || keys.has('KeyQ') || keys.has('ArrowLeft'))  mx -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight'))                     mx += 1;
 
-  if (pointer.inside) {
+  if (pointer.inside && !IS_TOUCH) {
     const m = 24;
     if (pointer.x < m) mx -= 1;
     if (pointer.x > window.innerWidth - m) mx += 1;
@@ -285,6 +300,7 @@ function setupInput() {
   window.addEventListener('blur', () => keys.clear());
 
   canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
     pointer.x = e.clientX;
     pointer.y = e.clientY;
     pointer.inside = true;
@@ -295,6 +311,7 @@ function setupInput() {
   canvas.addEventListener('pointerleave', () => { pointer.inside = false; });
 
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
     if (mode !== 'game') return;
 
     if (e.button === 0) {
@@ -319,6 +336,7 @@ function setupInput() {
   });
 
   window.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'touch') return;
     if (e.button !== 0 || !drag.active) return;
     drag.active = false;
     $('select-box').classList.add('hidden');
@@ -332,6 +350,105 @@ function setupInput() {
     e.preventDefault();
     if (mode !== 'game') return;
     cam.targetDist = THREE.MathUtils.clamp(cam.targetDist * (1 + e.deltaY * 0.0012), 20, 200);
+  }, { passive: false });
+
+  /* -------- Commandes tactiles (mobile / tablette) */
+  const touch = {
+    mode: null,          // 'pan' | 'pinch'
+    x: 0, y: 0,          // dernier point touché
+    startX: 0, startY: 0,
+    dist: 0,
+    moved: false,
+    fired: false,
+    timer: null
+  };
+
+  const clearTouchTimer = () => {
+    if (touch.timer) { clearTimeout(touch.timer); touch.timer = null; }
+  };
+
+  // Appui long : équivalent du clic droit (déplacement / assaut)
+  const longPress = (x, y) => {
+    if (mode !== 'game' || placement) return;
+    touch.fired = true;
+    if (navigator.vibrate) navigator.vibrate(18);
+    issueMoveOrder({ clientX: x, clientY: y });
+  };
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (mode !== 'game') return;
+    e.preventDefault();
+    pointer.inside = false;   // pas de défilement au bord au doigt
+
+    if (e.touches.length >= 2) {
+      clearTouchTimer();
+      touch.mode = 'pinch';
+      touch.moved = true;
+      const [a, b] = e.touches;
+      touch.dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      return;
+    }
+
+    const t = e.touches[0];
+    touch.mode = 'pan';
+    touch.x = touch.startX = t.clientX;
+    touch.y = touch.startY = t.clientY;
+    touch.moved = false;
+    touch.fired = false;
+    clearTouchTimer();
+    touch.timer = setTimeout(() => longPress(touch.startX, touch.startY), 420);
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (mode !== 'game') return;
+    e.preventDefault();
+
+    if (touch.mode === 'pinch' && e.touches.length >= 2) {
+      const [a, b] = e.touches;
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (touch.dist > 0 && d > 0) {
+        cam.targetDist = THREE.MathUtils.clamp(cam.targetDist * (touch.dist / d), 18, 170);
+      }
+      touch.dist = d;
+      return;
+    }
+
+    if (touch.mode !== 'pan' || e.touches.length !== 1) return;
+    const t = e.touches[0];
+
+    if (!touch.moved && Math.hypot(t.clientX - touch.startX, t.clientY - touch.startY) > 10) {
+      touch.moved = true;
+      clearTouchTimer();
+    }
+    if (touch.fired) return;
+
+    if (touch.moved) {
+      // Le décor suit le doigt
+      const k = cam.dist * 0.0013;
+      cam.focus.x -= (t.clientX - touch.x) * k;
+      cam.focus.z -= (t.clientY - touch.y) * k / Math.sin(cam.pitch);
+    }
+
+    touch.x = t.clientX;
+    touch.y = t.clientY;
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    if (mode !== 'game') return;
+    e.preventDefault();
+    clearTouchTimer();
+
+    // Un doigt qui se pose pendant qu'un autre est déjà là : on continue
+    if (e.touches.length > 0) return;
+
+    const wasTap = !touch.moved && !touch.fired;
+    touch.mode = null;
+
+    if (wasTap) {
+      if (pendingCommand) { issuePendingCommand(touch.startX, touch.startY); return; }
+      if (placement) { tryPlace(touch.startX, touch.startY); return; }
+      clickSelect(touch.startX, touch.startY, false);
+    }
   }, { passive: false });
 
   // Minimap
@@ -374,7 +491,19 @@ function groundPoint(x, y) {
   return raycaster.ray.intersectPlane(groundPlane, p) ? p : null;
 }
 
-function pickEntity(x, y) {
+/** Coordonnées écran d'une entité (projection propre, matrices resynchronisées) */
+function projectToScreen(e) {
+  camera.updateMatrixWorld();
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  const v = new THREE.Vector3(e.x, (e.alt || 0) + 1, e.z).project(camera);
+  return {
+    x: (v.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-v.y * 0.5 + 0.5) * window.innerHeight
+  };
+}
+
+/** Raycast exact : renvoie l'entité sous le pixel, ou null */
+function pickAt(x, y) {
   raycaster.setFromCamera(ndcFromClient(x, y), camera);
   const meshes = [];
   for (const u of units.values()) meshes.push(u.mesh);
@@ -389,13 +518,75 @@ function pickEntity(x, y) {
   return null;
 }
 
+/* Anneaux de sondage pour le doigt : une unité fait 7 px à zoom moyen */
+const PICK_RINGS = [12, 22, 32, 44];
+const PICK_OFFSETS = [];
+for (const r of PICK_RINGS) {
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    PICK_OFFSETS.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+}
+
+/**
+ * Sélection avec tolérance : au doigt (radius > 0), si le pixel exact ne touche
+ * rien on sonde autour et on garde l'entité la plus proche du doigt.
+ */
+function pickEntity(x, y, radius = 0) {
+  const exact = pickAt(x, y);
+  if (exact || radius <= 0) return exact;
+
+  let best = null;
+  let bestD = Infinity;
+
+  for (const [dx, dy] of PICK_OFFSETS) {
+    if (Math.hypot(dx, dy) > radius) continue;
+    const id = pickAt(x + dx, y + dy);
+    if (!id || id === best) continue;
+
+    const e = getEntity(id);
+    if (!e) continue;
+
+    const p = projectToScreen(e);
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < bestD) { bestD = d; best = id; }
+  }
+
+  return best;
+}
+
+/* Double-clic / double-tap : sélectionne tous les frères du même type à l'écran */
+let lastClick = { t: 0, x: 0, y: 0, id: null };
+
 function clickSelect(x, y, additive) {
-  const id = pickEntity(x, y);
+  const id = pickEntity(x, y, IS_TOUCH ? 34 : 0);
+
+  const now = performance.now();
+  const isDouble = now - lastClick.t < 340
+    && Math.hypot(x - lastClick.x, y - lastClick.y) < 26
+    && id && id === lastClick.id;
+  lastClick = { t: now, x, y, id };
+
   if (!additive) clearSelection();
   if (!id) return;
 
   const e = getEntity(id);
   if (!e || e.owner !== myId) return;
+
+  // Double appui : tout le même modèle visible à l'écran
+  if (isDouble && e.kind === 'unit') {
+    let n = 0;
+    for (const u of units.values()) {
+      if (u.owner !== myId || u.def.name !== e.def.name) continue;
+      selected.add(u.id);
+      if (u.ring) u.ring.visible = true;
+      n++;
+    }
+    if (n > 1) toast(`${n} × ${e.def.name}`);
+    audio.sfx('select');
+    refreshSelection();
+    return;
+  }
 
   if (additive && selected.has(id)) {
     selected.delete(id);
@@ -2515,6 +2706,11 @@ function beginMatch(roster, cfg) {
   $('lobby').classList.add('hidden');
   $('waiting').classList.add('hidden');
   $('hud').classList.remove('hidden');
+  updateOrientationHint();
+  $('btn-rotate-close').addEventListener('click', () => {
+    rotateDismissed = true;
+    updateOrientationHint();
+  });
 
   const me = players.find((p) => p.id === myId) || players[0];
   if (me) {
@@ -2945,6 +3141,8 @@ window.CAC = {
   get money() { return money; },
   get scene() { return scene; },
   get settings() { return settings; },
+  get isTouch() { return IS_TOUCH; },
+  get isPhone() { return IS_PHONE; },
 
   /* Accès de test/debug : reproduit ce que font la souris et le clavier. */
   debug: {
@@ -2984,14 +3182,26 @@ window.CAC = {
       updateHud();
       return money;
     },
+    /* Sonde le raycast : utile pour vérifier qu'un clic touche bien sa cible */
+    ray(x, y) {
+      raycaster.setFromCamera(ndcFromClient(x, y), camera);
+      const meshes = [];
+      for (const u of units.values()) meshes.push(u.mesh);
+      for (const b of buildings.values()) meshes.push(b.mesh);
+      const hits = raycaster.intersectObjects(meshes, true);
+      return {
+        ndc: ndcFromClient(x, y).toArray().map((v) => +v.toFixed(3)),
+        meshes: meshes.length,
+        hits: hits.length,
+        first: hits[0] ? (hits[0].object.userData.entityId || hits[0].object.parent?.userData?.entityId || null) : null
+      };
+    },
+
     screenOf(id) {
       const e = getEntity(id);
       if (!e) return null;
-      const v = new THREE.Vector3(e.x, (e.alt || 0) + 1, e.z).project(camera);
-      return {
-        x: Math.round((v.x * 0.5 + 0.5) * window.innerWidth),
-        y: Math.round((-v.y * 0.5 + 0.5) * window.innerHeight)
-      };
+      const p = projectToScreen(e);
+      return { x: Math.round(p.x), y: Math.round(p.y) };
     }
   }
 };
