@@ -1148,6 +1148,19 @@ function dockPointFor(ref, x, z) {
   return { x: ref.x, z: Math.min(lim, ref.z + r) };
 }
 
+/** Envoie le collecteur décharger à la raffinerie la plus proche. false si aucune. */
+function goUnload(u) {
+  const ref = nearestRefinery(u.owner, u.x, u.z);
+  if (!ref) return false;
+  u.state = 'toRefinery';
+  u.refineryId = ref.id;
+  u.dock = dockPointFor(ref, u.x, u.z);
+  u.target = { x: u.dock.x, z: u.dock.z };
+  u.dockT = 0;
+  setPath(u, u.dock.x, u.dock.z);
+  return true;
+}
+
 function updateCollector(u, dt) {
   // Ordre manuel en cours : on attend l'arrivée avant de reprendre le cycle
   if (u.state === 'move') {
@@ -1156,6 +1169,11 @@ function updateCollector(u, dt) {
   }
 
   if (u.state === 'idle') {
+    // Déjà chargé : on livre d'abord. Sans raffinerie on attend, au lieu de
+    // retourner vider un gisement qui ne sera jamais livré.
+    if (u.carry > 0) { goUnload(u); return; }
+    if (!nearestRefinery(u.owner, u.x, u.z)) return;
+
     const f = nearestField(u.x, u.z);
     if (!f) return;
     u.fieldId = f.def.id;
@@ -1186,24 +1204,23 @@ function updateCollector(u, dt) {
     const f = fields.get(u.fieldId);
     if (!f || f.remaining <= 0) { u.state = 'idle'; return; }
 
+    // Pas de raffinerie : on ne prélève rien
+    if (!nearestRefinery(u.owner, u.x, u.z)) { u.state = 'idle'; return; }
+
     const amount = Math.min(HARVEST_LOAD, f.remaining);
     takeFromField(f, amount);
     u.carry = amount;
-    u.state = 'toRefinery';
-
-    const ref = nearestRefinery(u.owner, u.x, u.z);
-    if (!ref) { u.state = 'idle'; return; }
-    u.refineryId = ref.id;
-    u.dock = dockPointFor(ref, u.x, u.z);
-    u.target = { x: u.dock.x, z: u.dock.z };
-    u.dockT = 0;
-    setPath(u, u.dock.x, u.dock.z);
+    goUnload(u);
     return;
   }
 
   if (u.state === 'toRefinery') {
     const ref = buildings.get(u.refineryId);
-    if (!ref || !ref.built) { u.state = 'idle'; u.target = null; u.path = null; return; }
+    if (!ref || !ref.built) {
+      // Raffinerie perdue : on tente la suivante, sinon on attend avec la cargaison
+      if (!goUnload(u)) { u.state = 'idle'; u.target = null; u.path = null; }
+      return;
+    }
     if (!u.dock) u.dock = dockPointFor(ref, u.x, u.z);
     u.dockT = (u.dockT || 0) + dt;
 
@@ -1425,6 +1442,10 @@ function applyDamage(entity, dmg, sourceId = null) {
       Math.hypot(src.x - entity.x, src.z - entity.z) <= reach;
 
     if (entity.mode === MODE.GUARD || (entity.mode === MODE.MOVE_TO && canHit)) {
+      // Un ordre de déplacement interrompu sera repris une fois le combat fini
+      entity.resume = entity.mode === MODE.MOVE_TO && entity.dest
+        ? { x: entity.dest.x, z: entity.dest.z }
+        : null;
       entity.mode = MODE.GUARD_RETALIATE;
       entity.home = { x: entity.x, z: entity.z };
       entity.dest = null;
@@ -2885,6 +2906,7 @@ function setPath(u, x, z) {
 }
 
 function orderMove(u, x, z, attackMove) {
+  u.resume = null;
   u.target = { x, z };
   u.dest = { x, z };
   u.orderTarget = null;
@@ -3100,6 +3122,14 @@ function updateUnitAI(u, dt) {
     /* -------- Garde riposte : engage à portée, revient à son poste */
     case MODE.GUARD_RETALIATE: {
       const t = findTarget(u, range);
+
+      // Plus d'ennemi : on repart là où on allait
+      if (!t && u.resume) {
+        const r = u.resume;
+        orderMove(u, r.x, r.z, false);   // remet aussi resume à null
+        break;
+      }
+
       // Laisse : on ne quitte pas son poste de plus de 26 unités pour une poursuite
       const leash = 26;
       const away = u.home ? Math.hypot(u.x - u.home.x, u.z - u.home.z) : 0;
@@ -4148,6 +4178,14 @@ window.CAC = {
       return [...units.values()]
         .filter((u) => u.owner === myId)
         .map((u) => [Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10]);
+    },
+
+    /* Donne un ordre de déplacement comme le ferait un clic droit (tests) */
+    order(id, x, z) {
+      const u = units.get(id);
+      if (!u) return false;
+      orderMove(u, x, z, false);
+      return true;
     },
 
     /* Applique un tir (tests de riposte) */
