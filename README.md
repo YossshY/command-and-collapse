@@ -268,6 +268,7 @@ Aucun fichier audio : **tout est synthétisé en direct** avec la Web Audio API
   encaissement, vente, erreur, tir (2 timbres, hauteur aléatoire, 5 voix
   max par 120 ms), explosion (3 couches). Un compresseur général évite toute
   saturation, même avec 12 tirs et 3 explosions simultanés au volume max.
+- **Sortie des unités** : une unité produite apparaît sur la **face avant** du bâtiment — celle qui regarde le point de ralliement, sinon le centre de la carte (donc vers l'ennemi) — et regarde vers l'extérieur. Si la place est prise, elle se décale le long de la face, puis essaie les autres côtés ; elle ne naît jamais sur un obstacle ni sur une autre unité.
 - **Réglages** : bouton ⚙ dans le lobby et dans le HUD → deux curseurs
   (musique / effets) et deux boutons muet. Les valeurs sont conservées dans
   `localStorage` (`cac.audio`).

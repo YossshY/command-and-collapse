@@ -1077,18 +1077,73 @@ function updateProduction(b, dt) {
   }
 }
 
+/**
+ * Point de sortie d'une unité : sur la FACE AVANT du bâtiment, celle qui regarde
+ * le point de ralliement (à défaut, le centre de la carte, donc vers l'ennemi).
+ * On décale latéralement le long de la face tant que la place est prise, puis
+ * on essaie les autres faces si la première est bouchée.
+ */
+function exitPointFor(b) {
+  if (navDirty) rebuildNav();
+
+  const tx = b.rally ? b.rally.x : 0;
+  const tz = b.rally ? b.rally.z : 0;
+  let dx = tx - b.x;
+  let dz = tz - b.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1) { dx = 0; dz = 1; } else { dx /= len; dz /= len; }
+
+  const hw = b.def.w / 2;
+  const hd = b.def.d / 2;
+  const lim = MAP_SIZE / 2 - 3;
+
+  const libre = (x, z) => {
+    if (Math.abs(x) > lim || Math.abs(z) > lim) return false;
+    const cell = navCellOf(x, z);
+    if (cell < 0 || navBlocked[cell]) return false;
+    for (const o of units.values()) {
+      if (!o.alt && Math.hypot(o.x - x, o.z - z) < 2.4) return false;
+    }
+    return true;
+  };
+
+  // face avant, puis droite, gauche, arrière
+  for (const rot of [0, Math.PI / 2, -Math.PI / 2, Math.PI]) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    const ux = dx * c - dz * s;
+    const uz = dx * s + dz * c;
+    // distance du centre au bord du rectangle dans cette direction
+    const t = Math.min(
+      Math.abs(ux) > 1e-6 ? hw / Math.abs(ux) : Infinity,
+      Math.abs(uz) > 1e-6 ? hd / Math.abs(uz) : Infinity
+    );
+    const px = b.x + ux * t;
+    const pz = b.z + uz * t;
+
+    for (const margin of [3.6, 4.8, 6.0]) {
+      for (const k of [0, 1, -1, 2, -2, 3, -3]) {
+        const x = px + ux * margin - uz * k * 2.6;
+        const z = pz + uz * margin + ux * k * 2.6;
+        if (libre(x, z)) return { x, z, ux, uz };
+      }
+    }
+  }
+
+  // Dernier recours : devant, même serré
+  return {
+    x: THREE.MathUtils.clamp(b.x + dx * (Math.max(hw, hd) + 3.6), -lim, lim),
+    z: THREE.MathUtils.clamp(b.z + dz * (Math.max(hw, hd) + 3.6), -lim, lim),
+    ux: dx, uz: dz
+  };
+}
+
 function spawnFromBuilding(b, type, free) {
   const def = unitDef(b.faction, type);
   if (!def) return;
 
-  const a = Math.random() * Math.PI * 2;
-  const r = Math.max(b.def.w, b.def.d) / 2 + 2.5;
-  const lim = MAP_SIZE / 2 - 3;
-  const x = THREE.MathUtils.clamp(b.x + Math.cos(a) * r, -lim, lim);
-  const z = THREE.MathUtils.clamp(b.z + Math.sin(a) * r, -lim, lim);
-
+  const exit = exitPointFor(b);
   const id = `${b.owner}:u${++entitySeq}`;
-  const u = addUnit({ id, type, owner: b.owner, x, z, ry: Math.atan2(-Math.cos(a), -Math.sin(a)) });
+  const u = addUnit({ id, type, owner: b.owner, x: exit.x, z: exit.z, ry: Math.atan2(exit.ux, exit.uz) });
 
   // Un aéronef est rattaché à l'aérodrome qui l'a produit
   if (u.alt) {
@@ -4186,6 +4241,14 @@ window.CAC = {
       if (!u) return false;
       orderMove(u, x, z, false);
       return true;
+    },
+
+    /* Fait sortir une unité d'un bâtiment (tests du point de sortie) */
+    produce(buildingId, type) {
+      const b = buildings.get(buildingId);
+      if (!b) return null;
+      const u = spawnFromBuilding(b, type, false);
+      return u ? { id: u.id, x: u.x, z: u.z, ry: u.ry } : null;
     },
 
     /* Applique un tir (tests de riposte) */
