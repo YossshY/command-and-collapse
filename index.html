@@ -23,6 +23,12 @@
 <!-- ============================== HUD DE PARTIE ============================== -->
 <div id="hud" class="hidden">
 
+  <!-- Barre de titre -->
+  <div class="topbar">
+    <span class="topbar-title">COMMAND &amp; COLLAPSE — ÉDITION NAVIGATEUR</span>
+    <span class="topbar-net" id="hud-net">—</span>
+  </div>
+
   <!-- Bandeau joueur (haut gauche) -->
   <div class="hud-top-left">
     <div class="badge">
@@ -38,30 +44,30 @@
   <!-- Colonne droite façon Generals : minimap, ressources, construction, sélection -->
   <div class="right-col">
 
-    <div class="minimap-frame">
-      <canvas id="minimap" width="200" height="200"></canvas>
-      <div class="mm-bar">
-        <span id="mm-zoom">Zoom</span>
-        <button id="btn-home" type="button" title="Revenir à la base (B)">⌂</button>
+    <!-- Argent + énergie -->
+    <div class="res-row">
+      <div class="money-plate" id="res-money">
+        <div class="money-value"><span>$</span><strong id="hud-money">0</strong></div>
+        <div class="power-line">
+          <span>ÉNERGIE</span>
+          <b id="power-label">0/0</b>
+        </div>
+      </div>
+
+      <div class="power-col" id="power-mini" title="Énergie produite / consommée">
+        <div class="power-col-track"><i id="power-fill"></i></div>
+        <span class="power-col-value" id="power-value">0</span>
       </div>
     </div>
 
-    <div class="res-row">
-      <div class="res money" id="res-money">
-        <span class="res-ico">$</span>
-        <div class="res-body">
-          <strong id="hud-money">0</strong>
-          <small id="money-note">crédits</small>
-        </div>
+    <!-- Radar tactique -->
+    <section class="radar" id="radar">
+      <canvas id="minimap" width="200" height="200"></canvas>
+      <div class="radar-foot">
+        <span>RADAR TACTIQUE</span>
+        <button id="btn-home" type="button" title="Revenir à la base (B)">⌂</button>
       </div>
-      <div class="res power" id="power-mini" title="Énergie produite / consommée">
-        <span class="res-ico">⚡</span>
-        <div class="res-body">
-          <strong id="power-label">0 / 0</strong>
-          <div class="power-track"><i id="power-fill"></i></div>
-        </div>
-      </div>
-    </div>
+    </section>
 
     <section class="panel sel-panel" id="hud-selection">
       <div class="sel-empty">Aucune sélection</div>

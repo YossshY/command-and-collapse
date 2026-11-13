@@ -473,6 +473,41 @@ Sur téléphone, la colonne se réduit (190 px puis 162 px), la minimap descend 
 trois colonnes écrasaient les noms. L'infobulle est désactivée au doigt, et le
 panneau peut se réduire pour laisser la grille défiler.
 
+## 18. Habillage « Desert Storm »
+
+Le HUD reprend la maquette de référence : bandeau de titre cyan, plaque
+d'argent biseautée, jauge d'énergie verticale, radar cadré et cartes de
+construction à badge de raccourci.
+
+| Élément | Détail |
+|---|---|
+| Bandeau | titre en monospace cyan + mode réseau à droite |
+| Argent | plaque à coins coupés (`clip-path`), chiffres 22 px, passe en rouge sous 300 $ |
+| Énergie | `produite/consommée` + jauge verticale segmentée, valeur en % |
+| Radar | cadre à équerres cyan, sol sable, routes des bases, cadre de caméra cyan |
+| Cartes | badge de touche, icône, nom en capitales, `prix · durée`, barre de PV relative |
+| Onglets | icône + libellé, actif en pavé cyan lumineux |
+
+**Raccourcis de construction** — la lettre affichée sur la carte fonctionne
+directement. Les lettres évitent `ZQSD/WASD` (caméra) et `X/C/H/B` (ordres) :
+
+| Onglet | Touches |
+|---|---|
+| Bâtiments | P réacteur · R dépôt · E caserne · U usine · F aérodrome · I recherche |
+| Défense | T tourelle · K batterie |
+| Infanterie | V vanguard · J javelin |
+| Véhicules | L collecteur · Y lynx · O paladin · G helios |
+| Aviation | N wraith · M faucon |
+
+`P` bascule sur la pause seulement quand l'onglet courant n'a pas de carte `P`.
+
+### Éclairage
+
+Le volume d'ombre suit désormais la caméra (`sunLight` dans `updateCamera`) :
+avec un volume fixe de ±70 autour de l'origine, tout le terrain hors du cadre
+sortait du volume et rendait **noir**. Un halo lumineux venait aussi des taches
+de la texture du sol (rayon jusqu'à 220 px sur 2048) — réduites à 18-88 px.
+
 ## Débogage
 
 La console du navigateur expose `window.CAC` :

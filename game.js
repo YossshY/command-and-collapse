@@ -57,7 +57,7 @@ const profile = {
 
 /* ------------------------------------------------------------------- three */
 
-let scene, camera, renderer, raycaster, clock;
+let scene, camera, renderer, raycaster, clock, sunLight;
 const decorRocks = [];
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const cam = {
@@ -85,16 +85,17 @@ function setupThree() {
   renderer.toneMappingExposure = 1.05;
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0e13);
-  scene.fog = new THREE.Fog(0x0a0e13, 150, 300);
+  scene.background = new THREE.Color(0xb9a583);
+  scene.fog = new THREE.Fog(0xc0ac86, 230, 520);
   scene.environment = makeEnvironment(renderer);
   scene.environmentIntensity = 0.55;
 
   camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 600);
 
-  scene.add(new THREE.HemisphereLight(0x9fc4e8, 0x2a3038, 1.15));
+  scene.add(new THREE.HemisphereLight(0xbfe0ff, 0x6b5a42, 1.5));
 
-  const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
+  const sun = new THREE.DirectionalLight(0xfff3dc, 2.2);
+  sunLight = sun;
   sun.position.set(45, 70, 30);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -112,8 +113,19 @@ function setupThree() {
   const groundMat = new THREE.MeshStandardMaterial({
     map: createGroundTexture(IS_PHONE ? 1024 : 2048),
     roughness: 0.95,
-    metalness: 0.05
+    metalness: 0.05,
+    envMapIntensity: 0.12      // sans ça l'env map dessine un halo autour de la caméra
   });
+  // Jupe de sable : la carte ne flotte plus dans le vide
+  const skirt = new THREE.Mesh(
+    new THREE.PlaneGeometry(MAP_SIZE * 6, MAP_SIZE * 6),
+    new THREE.MeshStandardMaterial({ color: 0x9c8768, roughness: 1, metalness: 0, envMapIntensity: 0.05 })
+  );
+  skirt.rotation.x = -Math.PI / 2;
+  skirt.position.y = -0.08;
+  skirt.receiveShadow = true;
+  scene.add(skirt);
+
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -227,6 +239,20 @@ function updateCamera(dt) {
 
   cam.dist += (cam.targetDist - cam.dist) * Math.min(1, dt * 9);
 
+  // Le volume d'ombre suit la vue : sinon tout le sol hors du cadre devient noir
+  if (sunLight) {
+    const R = Math.max(80, cam.dist * 1.35);
+    const sc = sunLight.shadow.camera;
+    if (sc.right !== R) {
+      sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R;
+      sc.far = R * 3;
+      sc.updateProjectionMatrix();
+    }
+    sunLight.position.set(cam.focus.x + 45, 70, cam.focus.z + 30);
+    sunLight.target.position.set(cam.focus.x, 0, cam.focus.z);
+    sunLight.target.updateMatrixWorld();
+  }
+
   const height = Math.sin(cam.pitch) * cam.dist;
   const back = Math.cos(cam.pitch) * cam.dist;
   camera.position.set(cam.focus.x, height, cam.focus.z + back);
@@ -245,6 +271,15 @@ function setupInput() {
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
     if (e.code === 'Escape' && paused) { setPaused(false); return; }
+
+    // Raccourcis de construction : la lettre affichée sur la carte de l'onglet courant
+    if (mode === 'game' && !paused && !placement && !e.ctrlKey && !e.metaKey && !e.altKey && e.key) {
+      const k = e.key.toUpperCase();
+      if (k.length === 1) {
+        const ref = gridRefs.find((r) => r.hotkey === k);
+        if (ref) { e.preventDefault(); ref.el.click(); return; }
+      }
+    }
 
     if (e.code === 'KeyP' || e.code === 'Space') {
       if (mode === 'game') { e.preventDefault(); togglePause(); }
@@ -1417,11 +1452,25 @@ function drawMinimap() {
   const px = (x) => (x + MAP_SIZE / 2) * k;
 
   // Sol sable
-  mmCtx.fillStyle = '#3b3327';
+  mmCtx.fillStyle = '#6b5a42';
   mmCtx.fillRect(0, 0, S, S);
 
+  // Routes des bases vers le centre
+  mmCtx.strokeStyle = 'rgba(42, 36, 28, 0.55)';
+  mmCtx.lineWidth = 2.5;
+  for (const sp of SPAWNS) {
+    mmCtx.beginPath();
+    mmCtx.moveTo(px(sp.x), px(sp.z));
+    mmCtx.lineTo(S / 2, S / 2);
+    mmCtx.stroke();
+  }
+  mmCtx.fillStyle = 'rgba(42, 36, 28, 0.45)';
+  mmCtx.beginPath();
+  mmCtx.arc(S / 2, S / 2, 14 * k + 4, 0, Math.PI * 2);
+  mmCtx.fill();
+
   // Quadrillage tactique
-  mmCtx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
+  mmCtx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
   mmCtx.lineWidth = 1;
   for (let i = 1; i < 6; i++) {
     const q = (S / 6) * i;
@@ -1465,7 +1514,7 @@ function drawMinimap() {
 
   const halfW = cam.dist * 0.9;
   const halfH = cam.dist * 0.55;
-  mmCtx.strokeStyle = 'rgba(255,255,255,0.55)';
+  mmCtx.strokeStyle = 'rgba(79, 216, 236, 0.85)';
   mmCtx.lineWidth = 1;
   mmCtx.strokeRect(
     px(cam.focus.x - halfW), px(cam.focus.z - halfH),
@@ -1549,14 +1598,17 @@ function updateHud() {
   const resMoney = $('res-money');
   if (resMoney) resMoney.classList.toggle('low', cash < 300);
 
-  $('power-label').textContent = `${energyProd} / ${energyUse}`;
+  $('power-label').textContent = `${energyProd}/${energyUse}`;
   const ratio = energyUse === 0 ? (energyProd > 0 ? 1 : 0) : Math.min(1, energyProd / energyUse);
-  $('power-fill').style.width = `${Math.max(3, ratio * 100)}%`;
+  $('power-fill').style.height = `${Math.max(2, ratio * 100)}%`;
   $('power-fill').classList.toggle('bad', lowPower);
   $('power-mini').classList.toggle('alert', lowPower);
 
-  const zoom = $('mm-zoom');
-  if (zoom) zoom.textContent = `vue ×${(58 / cam.dist).toFixed(1)}`;
+  const pv = $('power-value');
+  if (pv) pv.textContent = `${Math.round(ratio * 100)}%`;
+
+  const netTag = $('hud-net');
+  if (netTag) netTag.textContent = net.strategy === 'torrent' ? 'P2P DIRECT' : 'RELAIS MQTT';
 
   $('hud-peers').textContent = `${net.gamePeerCount()} allié${net.gamePeerCount() > 1 ? 's' : ''}`;
   refreshBuildGrid();
@@ -1841,19 +1893,22 @@ function hideCellTip() {
   if (box) box.classList.add('hidden');
 }
 
-function makeCell(it, onClick) {
+function makeCell(it, onClick, hpRatio = 0) {
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'build-cell';
   el.setAttribute('aria-label', it.def.name);
   el._item = it;
+  el._hotkey = HOTKEY[it.type] || '';
   el.innerHTML = `
+    ${el._hotkey ? `<span class="bc-key">${el._hotkey}</span>` : ''}
     <span class="bc-icon">${icon(it.iconName)}</span>
     <span class="bc-name">${it.def.name}</span>
     <span class="bc-meta">$${it.def.cost.toLocaleString('fr-FR')} <span>· ${it.def.time}s</span></span>
     <span class="bc-fill" style="height:0"></span>
     <span class="bc-pct"></span>
-    <span class="bc-queue"></span>`;
+    <span class="bc-queue"></span>
+    ${hpRatio > 0 ? `<span class="bc-hp"><i style="width:${Math.round(hpRatio * 100)}%"></i></span>` : ''}`;
 
   el.addEventListener('click', onClick);
   el.addEventListener('mouseenter', () => showCellTip(el));
@@ -1866,6 +1921,15 @@ function makeCell(it, onClick) {
     queue: el.querySelector('.bc-queue')
   };
 }
+
+/* Touches de construction : évite ZQSD/WASD (caméra) et X/C/H/B (ordres) */
+const HOTKEY = {
+  power: 'P', refinery: 'R', barracks: 'E', factory: 'U', airfield: 'F', research: 'I',
+  turret: 'T', patriot: 'K',
+  vanguard: 'V', javelin: 'J',
+  collector: 'L', lynx: 'Y', paladin: 'O', helios: 'G',
+  wraith: 'N', faucon: 'M'
+};
 
 const TABS = [
   ['structures', 'Bâtiments', 'structures', 'Bât.'],
@@ -1975,7 +2039,10 @@ function renderBuildGrid() {
 
   renderTabs();
 
-  for (const it of tabItems(gridCat)) {
+  const items = tabItems(gridCat);
+  const maxHp = Math.max(1, ...items.map((i) => i.def.hp || 0));
+
+  for (const it of items) {
     const cell = makeCell(it, () => {
       hideCellTip();
       if (it.kind === 'building') {
@@ -1984,9 +2051,9 @@ function renderBuildGrid() {
       } else {
         queueUnitAnywhere(it.type);
       }
-    });
+    }, (it.def.hp || 0) / maxHp);
     grid.appendChild(cell.el);
-    gridRefs.push({ ...cell, ...it });
+    gridRefs.push({ ...cell, ...it, hotkey: cell.el._hotkey });
   }
 
   refreshBuildGrid();
@@ -3321,6 +3388,12 @@ window.CAC = {
       updateHud();
       return money;
     },
+    /* Pose un bâtiment immédiatement (tests, maquettes) */
+    building(type, x, z, owner = myId) {
+      const id = `${owner}:dbgB${++entitySeq}`;
+      return addBuilding({ id, type, owner, x, z }).id;
+    },
+
     /* Sonde le raycast : utile pour vérifier qu'un clic touche bien sa cible */
     ray(x, y) {
       raycaster.setFromCamera(ndcFromClient(x, y), camera);

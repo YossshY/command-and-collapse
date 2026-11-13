@@ -72,21 +72,21 @@ export function createGroundTexture(S = 2048) {
   const u = S / MAP_SIZE; // pixels par unité monde
 
   // Fond sable
-  ctx.fillStyle = '#6d5c46';
+  ctx.fillStyle = '#9c8768';
   ctx.fillRect(0, 0, S, S);
 
   // Grandes taches de terrain
-  for (let i = 0; i < 220; i++) {
+  for (let i = 0; i < 420; i++) {
     const x = Math.random() * S;
     const y = Math.random() * S;
-    const r = 40 + Math.random() * 220;
+    const r = 18 + Math.random() * 70;   // taches courtes : évite un halo géant sous la caméra
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     if (Math.random() < 0.5) {
-      g.addColorStop(0, 'rgba(120,102,78,0.30)');
-      g.addColorStop(1, 'rgba(120,102,78,0)');
+      g.addColorStop(0, 'rgba(178,156,120,0.20)');
+      g.addColorStop(1, 'rgba(178,156,120,0)');
     } else {
-      g.addColorStop(0, 'rgba(78,66,50,0.30)');
-      g.addColorStop(1, 'rgba(78,66,50,0)');
+      g.addColorStop(0, 'rgba(126,104,78,0.18)');
+      g.addColorStop(1, 'rgba(126,104,78,0)');
     }
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -98,7 +98,7 @@ export function createGroundTexture(S = 2048) {
   const grain = Math.round(30000 * (S / 2048) ** 2);
   for (let i = 0; i < grain; i++) {
     const v = 60 + Math.random() * 60;
-    ctx.fillStyle = `rgba(${v + 30},${v + 18},${v},0.16)`;
+    ctx.fillStyle = `rgba(${v + 46},${v + 30},${v},0.20)`;
     ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);
   }
 
