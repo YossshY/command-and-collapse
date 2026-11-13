@@ -2520,3 +2520,57 @@ body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
   .bc-key { display: none; }
   .bottom-dock { width: calc(100% - 186px); bottom: 4px; }
 }
+
+
+/* Réticule d'attaque : survol d'une cible ennemie avec des unités sélectionnées */
+#scene.attack-hover {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'><circle cx='17' cy='17' r='9.4' fill='none' stroke='%23ff4b32' stroke-width='2.6'/><path d='M17 1.6v6.2M17 26.2v6.2M1.6 17h6.2M26.2 17h6.2' stroke='%23ff4b32' stroke-width='2.6' stroke-linecap='round'/></svg>") 17 17, crosshair;
+}
+
+
+/* ---- File d'attente : annulation (clic droit ou croix) ------------------ */
+
+.bb-row.bb-cancelable {
+  grid-template-columns: 68px minmax(0, 1fr) minmax(40px, 1.2fr) 30px 16px;
+  cursor: context-menu;
+}
+
+.bb-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #65869a;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 2px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.bb-x:hover { color: #ff8a80; background: rgba(255, 90, 90, 0.16); }
+
+/* ---- Bouton Vendre (panneau de sélection) -------------------------------- */
+
+.sel-sell {
+  margin-top: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  font-family: var(--ds-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffd9a3;
+  background: linear-gradient(180deg, #4a3520, #241a10);
+  border: 1px solid #7a5a2e;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sel-sell:hover {
+  color: #fff3d6;
+  border-color: #c08a3e;
+  background: linear-gradient(180deg, #6a4a26, #33240f);
+}
+
+.sel-sell:active { transform: translateY(1px); }

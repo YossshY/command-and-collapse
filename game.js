@@ -338,6 +338,20 @@ function setupInput() {
   window.addEventListener('keyup', (e) => keys.delete(e.code));
   window.addEventListener('blur', () => keys.clear());
 
+  /* Curseur d'attaque : réticule rouge dès que la souris survole une cible
+     ennemie alors que des unités sont sélectionnées. */
+  let hoverStamp = 0;
+
+  function updateHoverCursor(x, y) {
+    if (!selected.size) { canvas.classList.remove('attack-hover'); return; }
+    let hasUnit = false;
+    for (const id of selected) { if (units.has(id)) { hasUnit = true; break; } }
+    if (!hasUnit) { canvas.classList.remove('attack-hover'); return; }
+    const hitId = pickEntity(x, y, 14);
+    const hit = hitId ? getEntity(hitId) : null;
+    canvas.classList.toggle('attack-hover', !!(hit && hit.owner !== myId));
+  }
+
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
     pointer.x = e.clientX;
@@ -345,9 +359,17 @@ function setupInput() {
     pointer.inside = true;
     if (drag.active) updateDragBox(e);
     if (placement) updateGhost(e.clientX, e.clientY);
+
+    if (mode === 'game' && !placement && performance.now() - hoverStamp > 45) {
+      hoverStamp = performance.now();
+      updateHoverCursor(e.clientX, e.clientY);
+    }
   });
 
-  canvas.addEventListener('pointerleave', () => { pointer.inside = false; });
+  canvas.addEventListener('pointerleave', () => {
+    pointer.inside = false;
+    canvas.classList.remove('attack-hover');
+  });
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') return;
@@ -851,6 +873,7 @@ function addBuilding({ id, type, owner, x, z, progress = 1, hp = null }) {
   };
   applyBuildVisual(b);
   buildings.set(id, b);
+  navDirty = true;
   return b;
 }
 
@@ -875,6 +898,7 @@ function removeEntity(id) {
     disposeTree(b.mesh);
     buildings.delete(id);
     selected.delete(id);
+    navDirty = true;
     recomputeEnergy();
   }
 }
@@ -1019,6 +1043,23 @@ function queueUnit(b, type) {
   money -= def.cost;
   b.queue.push({ type, progress: 0 });
   updateHud();
+}
+
+/** Annule une unité de la file (par défaut la dernière) et rembourse sa mise. */
+function cancelQueued(b, index) {
+  if (!b || b.owner !== myId || !b.queue || !b.queue.length) return false;
+  const i = index === undefined
+    ? b.queue.length - 1
+    : Math.max(0, Math.min(b.queue.length - 1, index));
+  const job = b.queue[i];
+  const def = unitDef(b.faction, job.type);
+  if (def) money += def.cost;
+  b.queue.splice(i, 1);
+  audio.sfx('click');
+  toast(`${def ? def.name : job.type} annulé${def ? ` · +${def.cost} $` : ''}.`);
+  updateHud();
+  renderBuildBar();
+  return true;
 }
 
 function updateProduction(b, dt) {
@@ -1178,21 +1219,50 @@ function updateFields(dt) {
 
 /* -------------------------------------------------------------------- combat */
 
+/**
+ * Choix de cible, dans l'esprit des RTS : une unité ennemie passe avant un
+ * bâtiment, celui qui vient de nous toucher passe avant tout, et une défense
+ * qui tire est traitée comme une menace réelle.
+ */
 function findTarget(u, explicitRange) {
   const range = explicitRange || u.def.range || 0;
   if (!range) return null;
+
+  // Riposte immédiate contre l'agresseur s'il est encore à portée utile
+  // (la rancune s'efface au bout de 8 s)
+  const grudge = u.lastHitAt && performance.now() - u.lastHitAt < 8000;
+  const rev = grudge && u.lastAttacker ? getEntity(u.lastAttacker) : null;
+  if (rev && rev.owner !== u.owner &&
+      Math.hypot(rev.x - u.x, rev.z - u.z) <= range * 1.8) {
+    return rev;
+  }
+
+  const score = (e, d) => {
+    let s = 120 - d * 2;
+    if (e.kind === 'building') s -= 60;                    // un bâtiment ne bouge pas : moins urgent
+    if (e.def && e.def.defense) s += 30;                   // une défense qui tire est dangereuse
+    if (e.kind === 'unit' && e.def.role === 'récolte') s -= 15;
+    if (u.lastAttacker === e.id) s += 70;
+    if (e.hp <= 45) s += 10;                               // achever un blessé
+    return s;
+  };
+
   let best = null;
-  let bestD = range;
+  let bestScore = -Infinity;
 
   for (const e of units.values()) {
     if (e.owner === u.owner) continue;
     const d = Math.hypot(e.x - u.x, e.z - u.z);
-    if (d < bestD) { bestD = d; best = e; }
+    if (d > range) continue;
+    const s = score(e, d);
+    if (s > bestScore) { bestScore = s; best = e; }
   }
   for (const e of buildings.values()) {
     if (e.owner === u.owner) continue;
     const d = Math.hypot(e.x - u.x, e.z - u.z) - Math.max(e.def.w, e.def.d) / 2;
-    if (d < bestD) { bestD = d; best = e; }
+    if (d > range) continue;
+    const s = score(e, d);
+    if (s > bestScore) { bestScore = s; best = e; }
   }
   return best;
 }
@@ -1255,7 +1325,7 @@ function updateCombat(u, dt) {
   if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
 
   if (isLocal(target.owner)) {
-    applyDamage(target, u.def.dmg);
+    applyDamage(target, u.def.dmg, u.id);
   } else {
     net.sendHit({ target: target.id, dmg: u.def.dmg });
   }
@@ -1288,8 +1358,14 @@ function updateTracers(dt) {
   }
 }
 
-function applyDamage(entity, dmg) {
+function applyDamage(entity, dmg, sourceId = null) {
   entity.hp -= dmg;
+
+  // On retient qui a tiré : c'est lui qu'on ripostera en priorité
+  if (sourceId && sourceId !== entity.id) {
+    entity.lastAttacker = sourceId;
+    entity.lastHitAt = performance.now();
+  }
 
   // Un aéronef posé décolle dès qu'il est touché
   if (entity.kind === 'unit' && entity.alt && entity.landed) entity.landed = false;
@@ -1304,7 +1380,7 @@ function applyDamage(entity, dmg) {
     if (entity.kind === 'unit' && entity.def.suicide) {
       for (const e of [...units.values(), ...buildings.values()]) {
         if (e.owner === entity.owner) continue;
-        if (Math.hypot(e.x - entity.x, e.z - entity.z) < 6) applyDamage(e, 60);
+        if (Math.hypot(e.x - entity.x, e.z - entity.z) < 6) applyDamage(e, 60, entity.id);
       }
     }
     audio.sfx('explosion');
@@ -1369,12 +1445,14 @@ function updateFog() {
     if (u.owner !== myId) continue;
     drawSight(visCtx, u.x, u.z, u.def.sight || 14, 1);
     drawSight(exploredCtx, u.x, u.z, u.def.sight || 14, 1);
+    markExplored(u.x, u.z, u.def.sight || 14);
   }
   for (const b of buildings.values()) {
     if (b.owner !== myId) continue;
     const r = Math.max(b.def.w, b.def.d) / 2 + 20;
     drawSight(visCtx, b.x, b.z, r, 1);
     drawSight(exploredCtx, b.x, b.z, r, 1);
+    markExplored(b.x, b.z, r);
   }
 
   fogCtx.globalCompositeOperation = 'source-over';
@@ -1382,7 +1460,7 @@ function updateFog() {
   fogCtx.fillRect(0, 0, FOG_RES, FOG_RES);
 
   fogCtx.globalCompositeOperation = 'destination-out';
-  fogCtx.globalAlpha = 0.62;
+  fogCtx.globalAlpha = 0.88;      // zone connue : on continue de voir ce qui s'y passe
   fogCtx.drawImage(exploredCanvas, 0, 0);
   fogCtx.globalAlpha = 1;
   fogCtx.drawImage(visCanvas, 0, 0);
@@ -1396,6 +1474,44 @@ function revealStartArea() {
   const cc = [...buildings.values()].find((b) => b.owner === myId && b.type === 'cc');
   if (!cc) return;
   drawSight(exploredCtx, cc.x, cc.z, 55, 1);
+  markExplored(cc.x, cc.z, 55);
+}
+
+/* ---------------------------------------------------------------------------
+ * Exploration mémorisée
+ * Une zone découverte reste définitivement connue : on y voit les unités
+ * ennemies même sans avoir d'unité à proximité (comportement de Generals,
+ * qui n'utilise que le « shroud » et pas de brouillard masquant les unités).
+ * ------------------------------------------------------------------------- */
+
+const EXP_RES = 128;                       // 128 cases sur 300 unités ≈ 2,3 u/case
+const exploredGrid = new Uint8Array(EXP_RES * EXP_RES);
+
+function markExplored(x, z, radius) {
+  const k = EXP_RES / MAP_SIZE;
+  const cx = (x + MAP_SIZE / 2) * k;
+  const cz = (z + MAP_SIZE / 2) * k;
+  const rr = radius * k;
+  const x0 = Math.max(0, Math.floor(cx - rr));
+  const x1 = Math.min(EXP_RES - 1, Math.ceil(cx + rr));
+  const z0 = Math.max(0, Math.floor(cz - rr));
+  const z1 = Math.min(EXP_RES - 1, Math.ceil(cz + rr));
+  for (let j = z0; j <= z1; j++) {
+    const dz = j + 0.5 - cz;
+    for (let i = x0; i <= x1; i++) {
+      const dx = i + 0.5 - cx;
+      if (dx * dx + dz * dz <= rr * rr) exploredGrid[j * EXP_RES + i] = 1;
+    }
+  }
+}
+
+function isExplored(x, z) {
+  if (!settings.fog) return true;
+  const k = EXP_RES / MAP_SIZE;
+  const i = Math.floor((x + MAP_SIZE / 2) * k);
+  const j = Math.floor((z + MAP_SIZE / 2) * k);
+  if (i < 0 || j < 0 || i >= EXP_RES || j >= EXP_RES) return false;
+  return exploredGrid[j * EXP_RES + i] === 1;
 }
 
 function isVisibleToMe(x, z, extra = 0) {
@@ -1414,20 +1530,19 @@ function isVisibleToMe(x, z, extra = 0) {
 }
 
 function updateVisibility() {
+  // Zone découverte = zone surveillée : plus besoin d'une unité sur place.
   for (const u of units.values()) {
-    if (u.owner === myId) { u.mesh.visible = true; continue; }
-    u.mesh.visible = isVisibleToMe(u.x, u.z);
+    u.mesh.visible = u.owner === myId || isExplored(u.x, u.z);
   }
   for (const b of buildings.values()) {
-    if (b.owner === myId) { b.mesh.visible = true; continue; }
-    b.mesh.visible = isVisibleToMe(b.x, b.z);
+    b.mesh.visible = b.owner === myId || isExplored(b.x, b.z);
   }
-  // Le décor dépasse du plan de brouillard : on le masque hors vision
+  // Le décor dépasse du plan de brouillard : on le masque hors des zones connues
   for (const r of decorRocks) {
-    r.visible = isVisibleToMe(r.position.x, r.position.z, 0);
+    r.visible = isExplored(r.position.x, r.position.z);
   }
   for (const f of fields.values()) {
-    f.group.visible = isVisibleToMe(f.def.x, f.def.z, 0);
+    f.group.visible = isExplored(f.def.x, f.def.z);
   }
 }
 
@@ -1662,6 +1777,10 @@ function singleEntityHtml(e) {
     if (e.rally) rows.push(['Ralliement', 'défini']);
   }
 
+  const sellBtn = (e.kind === 'building' && e.owner === myId && e.type !== 'cc')
+    ? `<button class="sel-sell" type="button" data-sell="${e.id}">Vendre · +${Math.round(e.def.cost * 0.5)} $</button>`
+    : '';
+
   return `
     <div class="sel-head">${e.def.name}</div>
     <div class="sel-body">
@@ -1670,6 +1789,7 @@ function singleEntityHtml(e) {
         ${hpBarHtml(ratio)}
         <div class="sel-hp">${Math.ceil(e.hp)} / ${e.maxHp} PV</div>
         <div class="sel-stats">${rows.map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('')}</div>
+        ${sellBtn}
       </div>
     </div>`;
 }
@@ -1745,7 +1865,7 @@ function renderBuildBar() {
       items.push({
         key: `${b.id}:p`, kind: 'Production',
         name: def ? def.name : job.type,
-        p: job.progress, color: '#38bdf8',
+        p: job.progress, color: '#38bdf8', bid: b.id,
         extra: b.queue.length > 1 ? `+${b.queue.length - 1}` : ''
       });
     }
@@ -1769,12 +1889,22 @@ function renderBuildBar() {
 
     for (const it of items) {
       const row = document.createElement('div');
-      row.className = 'bb-row';
+      row.className = 'bb-row' + (it.kind === 'Production' ? ' bb-cancelable' : '');
+      row.dataset.bid = it.bid || '';
+      if (it.kind === 'Production') row.title = 'Clic droit : annuler le dernier en file';
       row.innerHTML = `
         <span class="bb-kind">${it.kind}</span>
         <span class="bb-name">${it.name}${it.extra ? ` <em>${it.extra}</em>` : ''}</span>
         <span class="bb-track"><i></i></span>
-        <span class="bb-pct">0 %</span>`;
+        <span class="bb-pct">0 %</span>
+        ${it.kind === 'Production' ? '<button class="bb-x" type="button" title="Annuler le dernier en file">✕</button>' : ''}`;
+      if (it.kind === 'Production') {
+        row.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault();
+          const b = buildings.get(row.dataset.bid);
+          if (b) cancelQueued(b);
+        });
+      }
       el.appendChild(row);
       buildBarRefs.push({
         fill: row.querySelector('.bb-track i'),
@@ -2168,6 +2298,23 @@ function centerOnBase() {
 function bindHud() {
   $('btn-home').addEventListener('click', centerOnBase);
   $('btn-pause').addEventListener('click', togglePause);
+
+  // Annuler une unité en file : croix du bandeau de chantiers
+  $('build-bar').addEventListener('click', (ev) => {
+    const x = ev.target.closest('.bb-x');
+    if (!x) return;
+    const row = x.closest('.bb-row');
+    const b = row && buildings.get(row.dataset.bid);
+    if (b) cancelQueued(b);
+  });
+
+  // Vendre un bâtiment depuis le panneau de sélection
+  $('hud-selection').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-sell]');
+    if (!btn) return;
+    const b = buildings.get(btn.dataset.sell);
+    if (b) sellBuilding(b);
+  });
   $('btn-resume').addEventListener('click', () => setPaused(false));
   $('btn-pause-settings').addEventListener('click', () => $('settings-modal').classList.remove('hidden'));
   $('btn-pause-quit').addEventListener('click', () => { setPaused(false); backToLobby(); });
@@ -2405,10 +2552,276 @@ function faceTowards(u, t, dt) {
 }
 
 /** Ordre de déplacement (ou d'attaque-mobile) vers un point. */
+
+/* ---------------------------------------------------------------------------
+ * NAVIGATION — grille d'occupation + A*
+ * Les unités contournent les bâtiments et les rochers au lieu de les
+ * traverser. Le chemin est calculé au moment de l'ordre, puis suivi point par
+ * point ; il est élagué (on saute tous les points alignés et dégagés).
+ * ------------------------------------------------------------------------- */
+
+const NAV_CELL = 2;                                   // 2 unités par case
+const NAV_N = Math.round(MAP_SIZE / NAV_CELL);         // 150 × 150
+const NAV_LEN = NAV_N * NAV_N;
+
+const navBlocked = new Uint8Array(NAV_LEN);
+const navG = new Float32Array(NAV_LEN);
+const navFrom = new Int32Array(NAV_LEN);
+const navVisit = new Uint32Array(NAV_LEN);
+const navOpen = new Uint8Array(NAV_LEN);
+let navStamp = 0;
+let navDirty = true;
+
+function navCellOf(x, z) {
+  const i = Math.floor((x + MAP_SIZE / 2) / NAV_CELL);
+  const j = Math.floor((z + MAP_SIZE / 2) / NAV_CELL);
+  if (i < 0 || j < 0 || i >= NAV_N || j >= NAV_N) return -1;
+  return j * NAV_N + i;
+}
+
+function navCenter(idx) {
+  const i = idx % NAV_N;
+  const j = (idx - i) / NAV_N;
+  return {
+    x: -MAP_SIZE / 2 + (i + 0.5) * NAV_CELL,
+    z: -MAP_SIZE / 2 + (j + 0.5) * NAV_CELL
+  };
+}
+
+function navMarkRect(cx, cz, w, d) {
+  const i0 = Math.floor((cx - w / 2 + MAP_SIZE / 2) / NAV_CELL);
+  const i1 = Math.floor((cx + w / 2 + MAP_SIZE / 2) / NAV_CELL);
+  const j0 = Math.floor((cz - d / 2 + MAP_SIZE / 2) / NAV_CELL);
+  const j1 = Math.floor((cz + d / 2 + MAP_SIZE / 2) / NAV_CELL);
+  for (let j = Math.max(0, j0); j <= Math.min(NAV_N - 1, j1); j++) {
+    const row = j * NAV_N;
+    for (let i = Math.max(0, i0); i <= Math.min(NAV_N - 1, i1); i++) navBlocked[row + i] = 1;
+  }
+}
+
+function navMarkCircle(cx, cz, r) {
+  navMarkRect(cx, cz, r * 2, r * 2);
+}
+
+/** Reconstruit la grille : bâtiments + rochers. */
+function rebuildNav() {
+  navBlocked.fill(0);
+  for (const b of buildings.values()) {
+    navMarkRect(b.x, b.z, b.def.w + 1.4, b.def.d + 1.4);
+  }
+  for (const r of decorRocks) {
+    navMarkCircle(r.position.x, r.position.z, 2.2);
+  }
+  navDirty = false;
+  for (const u of units.values()) if (!u.alt) u.path = null;
+}
+
+function navLineFree(x0, z0, x1, z1) {
+  const dist = Math.hypot(x1 - x0, z1 - z0);
+  const steps = Math.max(1, Math.ceil(dist / (NAV_CELL * 0.45)));
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const idx = navCellOf(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t);
+    if (idx < 0 || navBlocked[idx]) return false;
+  }
+  return true;
+}
+
+/** Case libre la plus proche (clic sur un bâtiment, par exemple). */
+function navNearestFree(idx, maxRing) {
+  if (idx < 0) return -1;
+  if (!navBlocked[idx]) return idx;
+  const i0 = idx % NAV_N;
+  const j0 = (idx - i0) / NAV_N;
+  for (let ring = 1; ring <= maxRing; ring++) {
+    for (let j = j0 - ring; j <= j0 + ring; j++) {
+      for (let i = i0 - ring; i <= i0 + ring; i++) {
+        if (Math.abs(i - i0) !== ring && Math.abs(j - j0) !== ring) continue;
+        if (i < 0 || j < 0 || i >= NAV_N || j >= NAV_N) continue;
+        const k = j * NAV_N + i;
+        if (!navBlocked[k]) return k;
+      }
+    }
+  }
+  return -1;
+}
+
+/* Petit tas binaire min sur f */
+const navHeap = { idx: [], f: [] };
+
+function navHeapClear() { navHeap.idx.length = 0; navHeap.f.length = 0; }
+
+function navHeapPush(idx, f) {
+  const a = navHeap.idx, b = navHeap.f;
+  let n = a.length;
+  a.push(idx); b.push(f);
+  while (n > 0) {
+    const p = (n - 1) >> 1;
+    if (b[p] <= b[n]) break;
+    [a[p], a[n]] = [a[n], a[p]];
+    [b[p], b[n]] = [b[n], b[p]];
+    n = p;
+  }
+}
+
+function navHeapPop() {
+  const a = navHeap.idx, b = navHeap.f;
+  const top = a[0];
+  const lastI = a.pop();
+  const lastF = b.pop();
+  if (a.length) {
+    a[0] = lastI; b[0] = lastF;
+    let n = 0;
+    for (;;) {
+      const l = n * 2 + 1, r = l + 1;
+      let m = n;
+      if (l < a.length && b[l] < b[m]) m = l;
+      if (r < a.length && b[r] < b[m]) m = r;
+      if (m === n) break;
+      [a[m], a[n]] = [a[n], a[m]];
+      [b[m], b[n]] = [b[n], b[m]];
+      n = m;
+    }
+  }
+  return top;
+}
+
+const NAV_DIRS = [
+  [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+  [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]
+];
+
+/** Chemin (liste de points monde) de (sx,sz) à (tx,tz), ou null. */
+function findPath(sx, sz, tx, tz) {
+  if (navDirty) rebuildNav();
+
+  let start = navCellOf(sx, sz);
+  let goal = navCellOf(tx, tz);
+  if (start < 0 || goal < 0) return null;
+
+  // Une unité peut se retrouver dans une case occupée (bâtiment posé sur elle) :
+  // on démarre alors de la case libre la plus proche.
+  if (navBlocked[start]) {
+    start = navNearestFree(start, 6);
+    if (start < 0) return null;
+  }
+
+  if (navBlocked[goal]) {
+    goal = navNearestFree(goal, 8);
+    if (goal < 0) return null;
+  }
+  if (start === goal || navLineFree(sx, sz, tx, tz)) return [{ x: tx, z: tz }];
+
+  const gi = goal % NAV_N;
+  const gj = (goal - gi) / NAV_N;
+  const hu = (idx) => {
+    const i = idx % NAV_N;
+    const j = (idx - i) / NAV_N;
+    const dx = Math.abs(i - gi);
+    const dz = Math.abs(j - gj);
+    return (dx + dz) + (Math.SQRT2 - 2) * Math.min(dx, dz);
+  };
+
+  navStamp++;
+  const touched = [];
+  const stamp = navStamp;
+
+  navHeapClear();
+  navVisit[start] = stamp;
+  navOpen[start] = 1;
+  navG[start] = 0;
+  navFrom[start] = -1;
+  touched.push(start);
+  navHeapPush(start, hu(start));
+
+  let found = false;
+  let guard = 0;
+
+  while (navHeap.idx.length && guard++ < 9000) {
+    const cur = navHeapPop();
+    if (navOpen[cur] !== 1) continue;
+    navOpen[cur] = 2;
+
+    if (cur === goal) { found = true; break; }
+
+    const ci = cur % NAV_N;
+    const cj = (cur - ci) / NAV_N;
+
+    for (const [di, dj, cost] of NAV_DIRS) {
+      const ni = ci + di;
+      const nj = cj + dj;
+      if (ni < 0 || nj < 0 || ni >= NAV_N || nj >= NAV_N) continue;
+      const nk = nj * NAV_N + ni;
+      if (navBlocked[nk]) continue;
+      // pas de coupe de coin en diagonale
+      if (di && dj) {
+        if (navBlocked[cj * NAV_N + ni] || navBlocked[nj * NAV_N + ci]) continue;
+      }
+      if (navOpen[nk] === 2) continue;
+
+      const g = navG[cur] + cost;
+      if (navVisit[nk] === stamp && g >= navG[nk]) continue;
+
+      if (navVisit[nk] !== stamp) { navVisit[nk] = stamp; touched.push(nk); }
+      navG[nk] = g;
+      navFrom[nk] = cur;
+      navOpen[nk] = 1;
+      navHeapPush(nk, g + hu(nk));
+    }
+  }
+
+  let out = null;
+  if (found) {
+    const cells = [];
+    for (let k = goal; k !== -1; k = navFrom[k]) cells.push(k);
+    cells.reverse();
+
+    const pts = cells.map(navCenter);
+    // on remplace l'arrivée par le point exact demandé
+    pts[pts.length - 1] = { x: tx, z: tz };
+
+    // élagage : on saute les points déjà visibles depuis l'ancre
+    out = [];
+    let ax = sx;
+    let az = sz;
+    let i = 0;
+    while (i < pts.length) {
+      let best = i;
+      for (let k = pts.length - 1; k >= i; k--) {
+        if (navLineFree(ax, az, pts[k].x, pts[k].z)) { best = k; break; }
+      }
+      out.push(pts[best]);
+      ax = pts[best].x;
+      az = pts[best].z;
+      i = best + 1;
+    }
+  }
+
+  for (const k of touched) { navOpen[k] = 0; }
+  return out;
+}
+
+/** Prochain point à viser : le long du chemin s'il y en a un. */
+function pathTarget(u, fallback) {
+  if (!u.path || !u.path.length) return fallback;
+  let wp = u.path[0];
+  while (wp && Math.hypot(wp.x - u.x, wp.z - u.z) < 1.1) {
+    u.path.shift();
+    wp = u.path[0];
+  }
+  return wp || fallback;
+}
+
+function setPath(u, x, z) {
+  if (u.alt) { u.path = null; return; }             // les aéronefs volent droit
+  u.path = findPath(u.x, u.z, x, z) || null;
+}
+
 function orderMove(u, x, z, attackMove) {
   u.target = { x, z };
   u.dest = { x, z };
   u.orderTarget = null;
+  setPath(u, x, z);
   // Un aéronef garde sa piste comme point d'attache, quoi qu'on lui dise
   if (!u.alt) u.home = { x, z };
   u.mode = attackMove ? MODE.ATTACK_MOVE : MODE.MOVE_TO;
@@ -2594,7 +3007,7 @@ function updateUnitAI(u, dt) {
         break;
       }
       if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 1.2) {
-        u.target = { x: u.dest.x, z: u.dest.z };
+        u.target = pathTarget(u, { x: u.dest.x, z: u.dest.z });
       } else {
         u.dest = null;
         u.mode = MODE.GUARD;
@@ -2607,7 +3020,7 @@ function updateUnitAI(u, dt) {
     /* -------- Déplacement simple : on arrive puis on garde */
     case MODE.MOVE_TO: {
       if (u.dest && Math.hypot(u.dest.x - u.x, u.dest.z - u.z) > 0.6) {
-        u.target = { x: u.dest.x, z: u.dest.z };
+        u.target = pathTarget(u, { x: u.dest.x, z: u.dest.z });
       } else {
         u.dest = null;
         u.mode = MODE.GUARD;
@@ -2620,7 +3033,12 @@ function updateUnitAI(u, dt) {
     /* -------- Garde riposte : engage à portée, revient à son poste */
     case MODE.GUARD_RETALIATE: {
       const t = findTarget(u, range);
-      if (t) {
+      // Laisse : on ne quitte pas son poste de plus de 26 unités pour une poursuite
+      const leash = 26;
+      const away = u.home ? Math.hypot(u.x - u.home.x, u.z - u.home.z) : 0;
+      if (t && away > leash && Math.hypot(t.x - u.x, t.z - u.z) > range * 0.8) {
+        u.target = { x: u.home.x, z: u.home.z };
+      } else if (t) {
         const d = Math.hypot(t.x - u.x, t.z - u.z);
         u.target = d > stopDistance(u) ? { x: t.x, z: t.z } : null;
         if (!u.target) faceTowards(u, t, dt);
@@ -2662,6 +3080,17 @@ function updateUnits(dt) {
       updateUnitAI(u, dt);
     }
 
+    // Chemin perdu (bâtiment posé entre-temps) : on le recalcule, au plus
+    // toutes les 1,2 s pour ne pas marteler l'A*.
+    if (!u.alt && u.dest && (!u.path || !u.path.length) &&
+        (u.mode === MODE.MOVE_TO || u.mode === MODE.ATTACK_MOVE)) {
+      const now = performance.now();
+      if (!u.pathAt || now - u.pathAt > 1200) {
+        u.pathAt = now;
+        setPath(u, u.dest.x, u.dest.z);
+      }
+    }
+
     if (u.target) {
       const dx = u.target.x - u.x;
       const dz = u.target.z - u.z;
@@ -2680,6 +3109,25 @@ function updateUnits(dt) {
     const lim = MAP_SIZE / 2 - 2;
     u.x = THREE.MathUtils.clamp(u.x, -lim, lim);
     u.z = THREE.MathUtils.clamp(u.z, -lim, lim);
+
+    // Collision douce : une unité qui se retrouve dans un obstacle (bâtiment
+    // construit sur son passage) est repoussée vers la case libre la plus proche.
+    if (!u.alt) {
+      if (navDirty) rebuildNav();
+      const cell = navCellOf(u.x, u.z);
+      if (cell >= 0 && navBlocked[cell]) {
+        const free = navNearestFree(cell, 3);
+        if (free >= 0) {
+          const c = navCenter(free);
+          const ddx = c.x - u.x;
+          const ddz = c.z - u.z;
+          const dd = Math.hypot(ddx, ddz) || 1;
+          const push = Math.min(dd, 8 * dt + 0.03);
+          u.x += (ddx / dd) * push;
+          u.z += (ddz / dd) * push;
+        }
+      }
+    }
 
     // Altitude lissée : décollage / atterrissage des aéronefs
     const cruise = u.alt || 0;
@@ -2726,7 +3174,7 @@ function updateDefense(b, dt) {
   spawnTracer(b, target, (b.def.h || 3) * 0.75);
   if (performance.now() - lastShotSfx > 70) { lastShotSfx = performance.now(); audio.sfx('shot'); }
 
-  if (isLocal(target.owner)) applyDamage(target, d.dmg);
+  if (isLocal(target.owner)) applyDamage(target, d.dmg, b.id);
   else net.sendHit({ target: target.id, dmg: d.dmg });
 }
 
@@ -2781,6 +3229,7 @@ function issueMoveOrder(e) {
       sel[0].def.produces && sel[0].def.produces.length) {
     sel[0].rally = { x: point.x, z: point.z };
     addMarker(point.x, point.z);
+    showRallyFlag(point.x, point.z);
     audio.sfx('click');
     toast('Point de ralliement défini.');
     return;
@@ -2826,7 +3275,70 @@ function addMarker(x, z) {
   markers.push(marker);
 }
 
+/* Drapeau de ralliement : simple indication, il s'efface tout seul (4,5 s) */
+const rallyFlags = [];
+
+function showRallyFlag(x, z) {
+  const g = new THREE.Group();
+
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6),
+    new THREE.MeshStandardMaterial({ color: 0xe8eff3, metalness: 0.35, roughness: 0.55 })
+  );
+  pole.position.y = 1.2;
+
+  const cloth = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.05, 0.62),
+    new THREE.MeshStandardMaterial({
+      color: 0x9be86a, emissive: 0x4f9d33, emissiveIntensity: 0.6,
+      side: THREE.DoubleSide, transparent: true, opacity: 1
+    })
+  );
+  cloth.position.set(0.56, 2.02, 0);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, 0.68, 22),
+    new THREE.MeshBasicMaterial({
+      color: 0x9be86a, transparent: true, opacity: 0.9,
+      side: THREE.DoubleSide, depthWrite: false
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+
+  g.add(pole, cloth, ring);
+  g.position.set(x, 0, z);
+  g.userData = { life: 0, max: 4.5 };
+  g.traverse((o) => { if (o.isMesh) o.renderOrder = 3; });
+  scene.add(g);
+  rallyFlags.push(g);
+}
+
+function updateRallyFlags(dt) {
+  for (let i = rallyFlags.length - 1; i >= 0; i--) {
+    const f = rallyFlags[i];
+    const d = f.userData;
+    d.life += dt;
+    const t = d.life;
+
+    const pop = Math.min(1, t * 7);                 // jaillit
+    f.scale.setScalar(0.7 + pop * 0.3);
+
+    const fade = Math.max(0, Math.min(1, (d.max - t) / 0.9));
+    f.traverse((o) => { if (o.isMesh) { o.material.transparent = true; o.material.opacity = fade; } });
+
+    f.children[1].rotation.y = Math.sin(t * 4.2) * 0.4;   // le drap flotte
+
+    if (t >= d.max) {
+      scene.remove(f);
+      f.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      rallyFlags.splice(i, 1);
+    }
+  }
+}
+
 function updateMarkers(dt) {
+  updateRallyFlags(dt);
   for (let i = markers.length - 1; i >= 0; i--) {
     const m = markers[i];
     m.userData.life += dt;
@@ -2981,6 +3493,8 @@ function backToLobby() {
 
   for (const m of markers) scene.remove(m);
   markers.length = 0;
+  for (const f of rallyFlags) scene.remove(f);
+  rallyFlags.length = 0;
 
   paused = false;
   $('pause-overlay').classList.add('hidden');
@@ -3391,6 +3905,40 @@ window.CAC = {
       updateHud();
       return money;
     },
+    /* Cible choisie par l'IA de tir d'une unité (tests) */
+    targetOf(id) {
+      const u = getEntity(id);
+      if (!u) return null;
+      const t = findTarget(u);
+      return t ? { id: t.id, kind: t.kind, name: t.def.name } : null;
+    },
+
+    /* Chemin calculé entre deux points (tests de navigation) */
+    path(x0, z0, x1, z1) {
+      const p = findPath(x0, z0, x1, z1);
+      return p ? p.map((q) => [Math.round(q.x * 10) / 10, Math.round(q.z * 10) / 10]) : null;
+    },
+
+    /* Cases bloquées autour d'un point (tests de navigation) */
+    blocked(x, z, span = 6) {
+      const out = [];
+      for (let dz = -span; dz <= span; dz += 2) {
+        let row = '';
+        for (let dx = -span; dx <= span; dx += 2) {
+          const c = navCellOf(x + dx, z + dz);
+          row += c >= 0 && navBlocked[c] ? '#' : '.';
+        }
+        out.push(row);
+      }
+      return out;
+    },
+
+    /* Coordonnées écran d'un point du monde (tests souris) */
+    screen(x, z) {
+      const v = new THREE.Vector3(x, 0, z).project(camera);
+      return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight };
+    },
+
     /* Pose un bâtiment immédiatement (tests, maquettes) */
     building(type, x, z, owner = myId) {
       const id = `${owner}:dbgB${++entitySeq}`;
